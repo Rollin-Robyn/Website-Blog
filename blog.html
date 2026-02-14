@@ -3,104 +3,49 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>testPage</title>
-    <meta name="description" content="Welcome to testPage — a retro pixel-art personal website." />
+    <title>testPage — Blog</title>
+    <meta name="description" content="Blog posts from testPage." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="css/style.css" />
+    <link rel="stylesheet" href="css/blog.css" />
   </head>
   <body>
     <canvas id="stars-canvas"></canvas>
 
-    <div class="page-container">
-      <!-- ========== HEADER ========== -->
-      <div class="header-row">
-        <div class="heart-badge">
-          <div class="heart-shape">&#10084;</div>
-          <span class="wip-label">WIP</span>
-        </div>
-        <div class="welcome-banner">
-          <h1>WELCOME!</h1>
+    <div class="blog-page-container">
+      <!-- ========== BLOG HEADER ========== -->
+      <div class="blog-page-header panel">
+        <a href="index.html" class="back-link">&#10094; BACK</a>
+        <h1 class="blog-page-title">BLOG</h1>
+        <div class="blog-page-header-right">
+          <button id="new-post-btn" class="admin-action-btn hidden">+ NEW POST</button>
         </div>
       </div>
 
-      <!-- ========== ABOUT ME + LINKS ========== -->
-      <div class="content-row">
-        <section class="about-me-panel panel">
-          <h2 class="panel-title">ABOUT ME!</h2>
-          <div class="about-me-content">
-            <div class="moon-decoration"></div>
-            <div class="about-placeholder">
-              <div class="landscape-silhouette"></div>
-            </div>
-          </div>
-        </section>
-
-        <aside class="links-panel panel">
-          <h2 class="panel-title">LINKS:</h2>
-          <ul class="links-list">
-            <li><a href="blog.html">Blog</a></li>
-            <li><a href="#">GitHub</a></li>
-            <li><a href="#">Twitter</a></li>
-            <li><a href="#">Discord</a></li>
-          </ul>
-        </aside>
-      </div>
-
-      <!-- ========== MUSIC PLAYER ========== -->
-      <div class="player-row">
-        <div class="music-player panel">
-          <div class="player-controls">
-            <span class="player-btn">&#9654;</span>
-            <span class="player-btn">&#8214;</span>
-            <div class="progress-bar">
-              <div class="progress-fill"></div>
-            </div>
-          </div>
-          <div class="volume-control">
-            <span class="volume-icon">&#128266;</span>
-            <div class="volume-bar">
-              <div class="volume-fill"></div>
-            </div>
-          </div>
+      <!-- ========== SEARCH & FILTER ========== -->
+      <div class="blog-toolbar panel">
+        <div class="search-box">
+          <span class="search-icon">&#128269;</span>
+          <input type="text" id="blog-search" placeholder="Search posts..." autocomplete="off" />
         </div>
-        <div class="current-song panel">
-          <h2 class="panel-title-sm">CURRENT SONG:</h2>
-          <p class="song-name">Nothing playing</p>
+        <div class="sort-controls">
+          <button id="sort-newest" class="sort-btn active" title="Newest first">NEW &#9660;</button>
+          <button id="sort-oldest" class="sort-btn" title="Oldest first">OLD &#9650;</button>
         </div>
       </div>
 
-      <!-- ========== TEXT SECTION ========== -->
-      <div class="text-section panel">
-        <p>NO IDEA WHAT TO PUT HERE TBH...</p>
+      <!-- ========== POST COUNT ========== -->
+      <div class="blog-post-count">
+        <span id="post-count-text">Loading...</span>
       </div>
 
-      <!-- ========== BLOG + SIDEBAR ========== -->
-      <div class="bottom-row">
-        <section class="blog-panel panel">
-          <div class="blog-header">
-            <h2 class="panel-title">BLOG:</h2>
-            <a href="blog.html" class="blog-view-all-link">VIEW ALL &#10095;</a>
-          </div>
-          <div id="blog-posts" class="blog-posts">
-            <p style="font-size:0.7rem;color:var(--text-muted);text-align:center;padding:12px 0;">
-              Loading posts...
-            </p>
-          </div>
-        </section>
-
-        <div class="sidebar-stack">
-          <div class="online-status panel">
-            <span class="on-text">ON</span><span class="line-text">LINE</span>
-          </div>
-          <div class="placeholder-panel panel">
-            <p>NO IDEA</p>
-          </div>
-          <div class="placeholder-panel panel">
-            <p>NO IDEA</p>
-          </div>
-        </div>
+      <!-- ========== POSTS GRID ========== -->
+      <div id="blog-posts-grid" class="blog-posts-grid">
+        <p style="font-size:0.7rem;color:var(--text-muted);text-align:center;padding:40px 0;">
+          Loading posts...
+        </p>
       </div>
     </div>
 
@@ -144,6 +89,59 @@
       </div>
     </div>
 
+    <!-- ========== NEW POST MODAL ========== -->
+    <div id="new-post-modal" class="modal-overlay hidden">
+      <div class="modal modal-wide">
+        <h2>NEW BLOG POST</h2>
+
+        <div class="form-group">
+          <label>TITLE & COLOR:</label>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <input type="text" id="post-title" placeholder="Enter post title..." style="flex:1;" />
+            <input type="color" id="post-title-color" value="#ff00de" title="Title Color"
+              style="width:40px;height:35px;border:none;cursor:pointer;" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>DEFAULT TEXT COLOR:</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <input type="color" id="post-color" value="#e0e0e0"
+              style="width:40px;height:30px;border:none;cursor:pointer;" />
+            <span style="font-size:0.7rem;color:var(--text-muted);">Base text color</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="post-content">CONTENT:</label>
+          <div class="editor-toolbar" style="margin-bottom:5px;display:flex;gap:5px;align-items:center;">
+            <button id="btn-bold" class="btn-tool" title="Bold">B</button>
+            <button id="btn-italic" class="btn-tool" title="Italic">I</button>
+            <button id="btn-header" class="btn-tool" title="Header">H</button>
+            <button id="btn-undo" class="btn-tool" title="Undo">↶</button>
+            <button id="btn-redo" class="btn-tool" title="Redo">↷</button>
+            <div style="width:1px;height:20px;background:var(--border-color);margin:0 5px;"></div>
+            <input type="color" id="editor-color" value="#00ff00"
+              style="width:30px;height:30px;border:none;padding:0;cursor:pointer;" title="Select Color" />
+            <button id="btn-color-apply" class="btn-tool" title="Apply Color to Selection">COLOR</button>
+          </div>
+          <textarea id="post-content" rows="8" placeholder="Write your post..."
+            style="font-family:monospace;font-size:0.85rem;"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="post-image">IMAGES (OPTIONAL):</label>
+          <input type="file" id="post-image" accept="image/*" multiple />
+          <div class="image-preview-container" id="image-preview"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="post-submit-btn" class="btn-primary">POST</button>
+          <button id="post-cancel-btn" class="btn-secondary">CANCEL</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ========== SETTINGS MODAL ========== -->
     <div id="settings-modal" class="modal-overlay hidden">
       <div class="modal">
@@ -173,9 +171,9 @@
           <label class="settings-label">PAGE WIDTH:</label>
           <div class="settings-slider-row">
             <span class="settings-slider-label">&#9500;</span>
-            <input type="range" id="setting-page-width" min="400" max="900" value="560" step="10" class="settings-slider" />
+            <input type="range" id="setting-page-width" min="400" max="900" value="700" step="10" class="settings-slider" />
             <span class="settings-slider-label">&#9508;</span>
-            <span id="page-width-value" class="settings-value">560px</span>
+            <span id="page-width-value" class="settings-value">700px</span>
           </div>
         </div>
 
@@ -228,6 +226,6 @@
       <img id="lightbox-img" alt="Zoomed image" />
     </div>
 
-    <script src="js/script.js"></script>
+    <script src="js/blog.js"></script>
   </body>
 </html>
