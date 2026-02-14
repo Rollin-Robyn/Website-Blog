@@ -24,6 +24,24 @@
         </div>
       </div>
 
+      <!-- ========== PENDING POSTS QUEUE ========== -->
+      <div id="pending-queue-panel" class="pending-queue-panel panel hidden">
+        <div class="pending-queue-header">
+          <h2 class="panel-title">
+            PENDING POSTS: <span id="pending-count" class="pending-count">0</span>
+          </h2>
+          <div class="pending-queue-actions">
+            <button id="publish-all-btn" class="admin-action-btn publish-all-btn" disabled>
+              &#9650; PUBLISH ALL
+            </button>
+            <button id="clear-queue-btn" class="btn-secondary clear-queue-btn">
+              CLEAR
+            </button>
+          </div>
+        </div>
+        <div id="pending-posts-list" class="pending-posts-list"></div>
+      </div>
+
       <!-- ========== SEARCH & FILTER ========== -->
       <div class="blog-toolbar panel">
         <div class="search-box">
@@ -136,7 +154,7 @@
         </div>
 
         <div class="modal-actions">
-          <button id="post-submit-btn" class="btn-primary">POST</button>
+          <button id="post-submit-btn" class="btn-primary">ADD TO QUEUE</button>
           <button id="post-cancel-btn" class="btn-secondary">CANCEL</button>
         </div>
       </div>

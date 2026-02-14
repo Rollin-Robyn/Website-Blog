@@ -1,5 +1,6 @@
 /* ============================================
    testPage — Blog Page Logic
+   With post queue system for batch publishing
 ============================================ */
 
 const GITHUB_OWNER = "Rollin-Robyn";
@@ -23,6 +24,9 @@ let currentSearch = "";
 let displayedCount = 0;
 let starsActive = true;
 let starsAnimationId = null;
+
+// ============ POST QUEUE ============
+let pendingQueue = [];
 
 function log(...args) {
   if (DEBUG) console.log("[BLOG]", ...args);
@@ -262,6 +266,14 @@ function parseDate(dateStr) {
   return new Date(2000 + parseInt(yy), parseInt(mm) - 1, parseInt(dd)).getTime();
 }
 
+function formatDate() {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, "0");
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yy = String(now.getFullYear()).slice(-2);
+  return `${dd}/${mm}/${yy}`;
+}
+
 // ============ FILTERING & SORTING ============
 function getFilteredPosts() {
   let posts = [...cachedPosts];
@@ -419,31 +431,169 @@ function openPostDetail(post) {
   modal.classList.remove("hidden");
 }
 
-// ============ POST CRUD ============
-async function addPost(title, content, color, imageUrls = [], titleColor = null) {
-  const now = new Date();
-  const dd = String(now.getDate()).padStart(2, "0");
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const yy = String(now.getFullYear()).slice(-2);
-
-  const newPost = {
-    id: "post-" + Date.now(),
-    date: `${dd}/${mm}/${yy}`,
-    title: title || "UNTITLED POST",
-    titleColor: titleColor,
-    content: content,
-    color: color || "#ffffff",
-    images: imageUrls,
-  };
-
-  await fetchPostsFromGitHub();
-  cachedPosts.unshift(newPost);
-
-  const saved = await savePostsToGitHub(cachedPosts);
-  if (saved) { resetAndRender(); return true; }
-  else { cachedPosts.shift(); resetAndRender(); return false; }
+// ============ QUEUE SYSTEM ============
+function addToQueue(postData) {
+  pendingQueue.push(postData);
+  log("Added to queue. Queue size:", pendingQueue.length);
+  renderQueue();
+  showStatus(`ADDED TO QUEUE (${pendingQueue.length} PENDING)`, "success");
 }
 
+function removeFromQueue(index) {
+  if (index >= 0 && index < pendingQueue.length) {
+    const removed = pendingQueue.splice(index, 1)[0];
+    log("Removed from queue:", removed.title);
+    renderQueue();
+    showStatus("REMOVED FROM QUEUE", "success");
+  }
+}
+
+function clearQueue() {
+  pendingQueue = [];
+  log("Queue cleared");
+  renderQueue();
+  showStatus("QUEUE CLEARED", "success");
+}
+
+function renderQueue() {
+  const panel = document.getElementById("pending-queue-panel");
+  const list = document.getElementById("pending-posts-list");
+  const countEl = document.getElementById("pending-count");
+  const publishBtn = document.getElementById("publish-all-btn");
+
+  if (!panel || !list) return;
+
+  const isAdmin = sessionStorage.getItem("testpage_admin") === "true";
+
+  if (pendingQueue.length === 0 || !isAdmin) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  panel.classList.remove("hidden");
+  if (countEl) countEl.textContent = pendingQueue.length;
+  if (publishBtn) publishBtn.disabled = pendingQueue.length === 0;
+
+  list.innerHTML = "";
+
+  pendingQueue.forEach((post, index) => {
+    const item = document.createElement("div");
+    item.className = "pending-post-item";
+
+    const images = post.localImages || [];
+    let thumbHtml = `<span class="heart-mini">&#10084;</span>`;
+    if (images.length > 0) {
+      thumbHtml = `<img src="${images[0]}" alt="thumb">`;
+    }
+
+    const title = post.title ? escapeHtml(post.title) : "UNTITLED POST";
+    const contentPreview = stripMarkdown(post.content || "").substring(0, 60);
+    const imageCount = images.length > 0 ? `${images.length} IMG` : "NO IMG";
+
+    item.innerHTML = `
+      <span class="pending-post-number">#${index + 1}</span>
+      <div class="pending-post-thumb">${thumbHtml}</div>
+      <div class="pending-post-info">
+        <div class="pending-post-title">${title}</div>
+        <div class="pending-post-meta">${escapeHtml(post.date)} · ${imageCount}${contentPreview ? " · " + escapeHtml(contentPreview) + "..." : ""}</div>
+      </div>
+      <button class="pending-post-remove" data-index="${index}" title="Remove from queue">&#10005;</button>
+    `;
+
+    list.appendChild(item);
+  });
+
+  list.querySelectorAll(".pending-post-remove").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.index);
+      removeFromQueue(idx);
+    });
+  });
+}
+
+async function publishAll() {
+  if (pendingQueue.length === 0) return;
+  if (!githubToken) { alert("Not authenticated!"); return; }
+
+  const publishBtn = document.getElementById("publish-all-btn");
+  if (publishBtn) {
+    publishBtn.disabled = true;
+    publishBtn.textContent = "PUBLISHING...";
+    publishBtn.classList.add("publishing");
+  }
+
+  try {
+    showStatus("FETCHING LATEST POSTS...", "saving");
+    await fetchPostsFromGitHub();
+
+    const totalImages = pendingQueue.reduce((sum, p) => sum + (p.localImageFiles || []).length, 0);
+    let uploadedCount = 0;
+
+    for (let i = 0; i < pendingQueue.length; i++) {
+      const post = pendingQueue[i];
+      const imageUrls = [];
+
+      if (post.localImageFiles && post.localImageFiles.length > 0) {
+        for (let j = 0; j < post.localImageFiles.length; j++) {
+          uploadedCount++;
+          showStatus(`UPLOADING IMAGE ${uploadedCount}/${totalImages}...`, "saving");
+
+          try {
+            const compressed = await compressImage(post.localImageFiles[j]);
+            const url = await uploadImageToGitHub(compressed, `img-${Date.now()}-${i}-${j}.jpg`);
+            if (url) imageUrls.push(url);
+          } catch (e) {
+            console.error("Image upload failed:", e);
+          }
+        }
+      }
+
+      post.images = imageUrls;
+      delete post.localImages;
+      delete post.localImageFiles;
+    }
+
+    showStatus(`SAVING ${pendingQueue.length} POSTS...`, "saving");
+    const newPosts = pendingQueue.map((p) => ({
+      id: p.id,
+      date: p.date,
+      title: p.title,
+      titleColor: p.titleColor,
+      content: p.content,
+      color: p.color,
+      images: p.images,
+    }));
+
+    cachedPosts = [...newPosts, ...cachedPosts];
+
+    const saved = await savePostsToGitHub(cachedPosts);
+
+    if (saved) {
+      const count = pendingQueue.length;
+      pendingQueue = [];
+      renderQueue();
+      resetAndRender();
+      showStatus(`PUBLISHED ${count} POST${count !== 1 ? "S" : ""}!`, "success");
+      log("Published", count, "posts successfully");
+    } else {
+      cachedPosts = cachedPosts.filter(
+        (p) => !newPosts.some((np) => np.id === p.id)
+      );
+      showStatus("PUBLISH FAILED!", "error");
+    }
+  } catch (err) {
+    console.error("Publish failed:", err);
+    showStatus("PUBLISH FAILED!", "error");
+  }
+
+  if (publishBtn) {
+    publishBtn.disabled = pendingQueue.length === 0;
+    publishBtn.textContent = "▲ PUBLISH ALL";
+    publishBtn.classList.remove("publishing");
+  }
+}
+
+// ============ POST CRUD ============
 async function deletePost(id) {
   await fetchPostsFromGitHub();
   cachedPosts = cachedPosts.filter((p) => p.id !== id);
@@ -471,6 +621,21 @@ if (lightboxModal) lightboxModal.addEventListener("click", (e) => { if (e.target
 // ============ IMAGE COMPRESS ============
 function compressImage(file, maxWidth = 800, quality = 0.7) {
   return new Promise((resolve, reject) => {
+    if (typeof file === "string" && file.startsWith("data:")) {
+      const img = new Image();
+      img.src = file;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = Math.round((h * maxWidth) / w); w = maxWidth; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      return;
+    }
+
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = (event) => {
@@ -652,12 +817,17 @@ function setAdminMode(enabled) {
   const newPostBtn = document.getElementById("new-post-btn");
 
   if (enabled) sessionStorage.setItem("testpage_admin", "true");
-  else { sessionStorage.removeItem("testpage_admin"); githubToken = null; }
+  else {
+    sessionStorage.removeItem("testpage_admin");
+    githubToken = null;
+    pendingQueue = [];
+  }
 
   if (loginBtn) loginBtn.classList.toggle("hidden", enabled);
   if (logoutBtn) logoutBtn.classList.toggle("hidden", !enabled);
   if (newPostBtn) newPostBtn.classList.toggle("hidden", !enabled);
 
+  renderQueue();
   resetAndRender();
 }
 
@@ -785,9 +955,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (passwordInput) passwordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") tokenInput.focus(); });
   if (tokenInput) tokenInput.addEventListener("keydown", (e) => { if (e.key === "Enter") loginSubmit.click(); });
-  if (logoutBtn) logoutBtn.addEventListener("click", () => { setAdminMode(false); showStatus("LOGGED OUT", "success"); });
 
-  // New post
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", () => {
+      if (pendingQueue.length > 0) {
+        if (!confirm(`You have ${pendingQueue.length} unpublished post(s). Logout anyway? They will be lost.`)) {
+          return;
+        }
+      }
+      setAdminMode(false);
+      showStatus("LOGGED OUT", "success");
+    });
+  }
+
+  // New post — adds to queue instead of publishing
   const newPostModal = document.getElementById("new-post-modal");
   const newPostBtn = document.getElementById("new-post-btn");
   const postSubmit = document.getElementById("post-submit-btn");
@@ -804,7 +985,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       const ii = document.getElementById("post-image"); if (ii) ii.value = "";
       const pv = document.getElementById("image-preview"); if (pv) { pv.innerHTML = ""; pv.classList.remove("show"); }
       historyStack = []; historyIndex = -1; saveHistory();
-      setTimeout(() => postContentInput.focus(), 100);
+      setTimeout(() => {
+        const ti2 = document.getElementById("post-title");
+        if (ti2) ti2.focus();
+        else postContentInput.focus();
+      }, 100);
     });
   }
 
@@ -821,37 +1006,73 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       if (!content && !hasImages) { alert("Enter text or select an image!"); return; }
 
-      postSubmit.textContent = "UPLOADING..."; postSubmit.disabled = true;
+      const localImages = [];
+      const localImageFiles = [];
 
-      const imageUrls = [];
       if (hasImages) {
+        postSubmit.textContent = "READING..."; postSubmit.disabled = true;
+
         for (let i = 0; i < imgInput.files.length; i++) {
-          try {
-            showStatus(`COMPRESSING IMAGE ${i + 1}...`, "saving");
-            const compressed = await compressImage(imgInput.files[i]);
-            showStatus(`UPLOADING IMAGE ${i + 1}...`, "saving");
-            const url = await uploadImageToGitHub(compressed, `img-${Date.now()}-${i}.jpg`);
-            if (url) imageUrls.push(url);
-          } catch (e) { console.error("Image failed:", e); }
+          const file = imgInput.files[i];
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          localImages.push(base64);
+          localImageFiles.push(base64);
         }
       }
 
-      const success = await addPost(title, content, color, imageUrls, titleColor);
+      const queueItem = {
+        id: "post-" + Date.now(),
+        date: formatDate(),
+        title: title || "UNTITLED POST",
+        titleColor: titleColor,
+        content: content,
+        color: color || "#ffffff",
+        images: [],
+        localImages: localImages,
+        localImageFiles: localImageFiles,
+      };
 
-      if (success) {
-        newPostModal.classList.add("hidden");
-        postContentInput.value = "";
-        const ti = document.getElementById("post-title"); if (ti) ti.value = "";
-        const tc = document.getElementById("post-title-color"); if (tc) tc.value = "#ff00de";
-        imgInput.value = "";
-        const pv = document.getElementById("image-preview"); if (pv) { pv.innerHTML = ""; pv.classList.remove("show"); }
-      }
+      addToQueue(queueItem);
 
-      postSubmit.textContent = "POST"; postSubmit.disabled = false;
+      newPostModal.classList.add("hidden");
+      postContentInput.value = "";
+      const ti = document.getElementById("post-title"); if (ti) ti.value = "";
+      const tc = document.getElementById("post-title-color"); if (tc) tc.value = "#ff00de";
+      imgInput.value = "";
+      const pv = document.getElementById("image-preview"); if (pv) { pv.innerHTML = ""; pv.classList.remove("show"); }
+
+      postSubmit.textContent = "ADD TO QUEUE"; postSubmit.disabled = false;
     });
   }
 
   if (postContentInput) postContentInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.ctrlKey) postSubmit.click(); });
+
+  // Publish all
+  const publishAllBtn = document.getElementById("publish-all-btn");
+  if (publishAllBtn) {
+    publishAllBtn.addEventListener("click", async () => {
+      if (pendingQueue.length === 0) return;
+      const count = pendingQueue.length;
+      if (!confirm(`Publish ${count} post${count !== 1 ? "s" : ""} now?`)) return;
+      await publishAll();
+    });
+  }
+
+  // Clear queue
+  const clearQueueBtn = document.getElementById("clear-queue-btn");
+  if (clearQueueBtn) {
+    clearQueueBtn.addEventListener("click", () => {
+      if (pendingQueue.length === 0) return;
+      if (confirm(`Remove all ${pendingQueue.length} pending posts from queue?`)) {
+        clearQueue();
+      }
+    });
+  }
 
   // Close overlays
   [loginModal, newPostModal].forEach((m) => {
