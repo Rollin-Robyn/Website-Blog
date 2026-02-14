@@ -86,9 +86,14 @@
         <section class="blog-panel panel">
           <div class="blog-header">
             <h2 class="panel-title">BLOG:</h2>
-            <button id="new-post-btn" class="admin-action-btn hidden">
-              + NEW POST
-            </button>
+            <div class="admin-blog-actions hidden" id="admin-blog-actions">
+              <button id="new-post-btn" class="admin-action-btn">
+                + NEW
+              </button>
+              <button id="publish-btn" class="publish-btn" disabled>
+                PUBLISH
+              </button>
+            </div>
           </div>
           <div id="blog-posts" class="blog-posts">
             <p
@@ -221,7 +226,6 @@
         <div class="form-group">
           <label for="post-content">CONTENT:</label>
 
-          <!-- Editor Toolbar -->
           <div
             class="editor-toolbar"
             style="
@@ -281,7 +285,7 @@
         </div>
 
         <div class="modal-actions">
-          <button id="post-submit-btn" class="btn-primary">POST</button>
+          <button id="post-submit-btn" class="btn-primary">ADD POST</button>
           <button id="post-cancel-btn" class="btn-secondary">CANCEL</button>
         </div>
       </div>
@@ -305,6 +309,21 @@
     >
       <span class="lightbox-close-btn">&times;</span>
       <img id="lightbox-img" alt="Zoomed image" />
+    </div>
+
+    <!-- ========== PUBLISH CONFIRM MODAL ========== -->
+    <div id="publish-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2>PUBLISH CHANGES</h2>
+        <div id="publish-summary" style="margin-bottom: 16px;"></div>
+        <p style="font-size: 0.6rem; color: var(--text-muted); text-align: center; line-height: 2;">
+          This will push all changes to GitHub. Everyone will see them.
+        </p>
+        <div class="modal-actions">
+          <button id="publish-confirm-btn" class="btn-primary">PUBLISH</button>
+          <button id="publish-cancel-btn" class="btn-secondary">CANCEL</button>
+        </div>
+      </div>
     </div>
 
     <script src="script.js"></script>

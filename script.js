@@ -1,26 +1,33 @@
 /* ============================================
    testPage — Client-Side Logic
-   Blog CRUD via GitHub API · Admin Auth · Stars
+   Batch Publish Blog via GitHub API
 ============================================ */
 
 // ============ CONFIGURATION ============
-// !!! CHANGE THESE TO YOUR REPO DETAILS !!!
-const GITHUB_OWNER = "Rollin-Robyn";
-const GITHUB_REPO = "Website-Blog";
+const GITHUB_OWNER = "YOUR_GITHUB_USERNAME";
+const GITHUB_REPO = "YOUR_REPO_NAME";
 const GITHUB_BRANCH = "main";
 const POSTS_FILE_PATH = "posts.json";
+const DEBUG = true;
 
 const ADMIN_USERNAME_HASH =
   "575aad173fe88daee328513f7863c40938ac02bfda2c3e384d3c5c5a83d0e3cf";
 const ADMIN_PASSWORD_HASH =
   "db7009bbc0ea420246146b8336df6f33f7e67d7f1389c1f58496d012a2f29e39";
 
-// In-memory state
-let cachedPosts = [];
+// State
+let serverPosts = [];       // What's currently on GitHub
+let localPosts = [];        // What admin sees (with pending changes)
+let pendingAdds = [];       // IDs of posts added locally but not published
+let pendingDeletes = [];    // IDs of posts marked for deletion
 let fileSha = null;
 let githubToken = null;
 
-// ============ SHA-256 HASHING ============
+function log(...args) {
+  if (DEBUG) console.log("[BLOG]", ...args);
+}
+
+// ============ SHA-256 ============
 async function sha256(text) {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
@@ -31,7 +38,6 @@ async function sha256(text) {
 
 // ============ STATUS INDICATOR ============
 function showStatus(message, type = "saving") {
-  // Remove existing
   const existing = document.querySelector(".save-status");
   if (existing) existing.remove();
 
@@ -43,56 +49,54 @@ function showStatus(message, type = "saving") {
   if (type === "success" || type === "error") {
     setTimeout(() => {
       if (el.parentNode) el.remove();
-    }, 3000);
+    }, 4000);
   }
 
   return el;
 }
 
-// ============ GITHUB API ============
+// ============ PENDING CHANGES ============
+function hasPendingChanges() {
+  return pendingAdds.length > 0 || pendingDeletes.length > 0;
+}
 
-/**
- * Fetch posts.json from GitHub (public read — no token needed)
- */
-async function fetchPostsFromGitHub() {
-  try {
-    // Use raw content URL for public repos (no auth needed, no rate limit issues)
-    const url = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${POSTS_FILE_PATH}?t=${Date.now()}`;
+function updatePublishButton() {
+  const btn = document.getElementById("publish-btn");
+  if (!btn) return;
 
-    const response = await fetch(url);
+  const hasChanges = hasPendingChanges();
+  btn.disabled = !hasChanges;
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        console.log("posts.json not found, starting fresh");
-        cachedPosts = [];
-        return [];
-      }
-      throw new Error(`HTTP ${response.status}`);
-    }
+  if (hasChanges) {
+    btn.classList.add("has-changes");
+    const total = pendingAdds.length + pendingDeletes.length;
 
-    const posts = await response.json();
-    cachedPosts = posts;
-    return posts;
-  } catch (err) {
-    console.error("Failed to fetch posts:", err);
-    // Return cached if available
-    return cachedPosts;
+    // Remove old badge
+    const oldBadge = btn.querySelector(".change-badge");
+    if (oldBadge) oldBadge.remove();
+
+    const badge = document.createElement("span");
+    badge.className = "change-badge";
+    badge.textContent = total;
+    btn.appendChild(badge);
+  } else {
+    btn.classList.remove("has-changes");
+    const oldBadge = btn.querySelector(".change-badge");
+    if (oldBadge) oldBadge.remove();
   }
 }
 
-/**
- * Get the current SHA of posts.json (needed for updates via API)
- * This requires the API endpoint, not raw content
- */
-async function getFileSha() {
+// ============ GITHUB API ============
+async function fetchPostsFromGitHub() {
   try {
+    log("Fetching posts from GitHub...");
+
     const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}?ref=${GITHUB_BRANCH}`;
 
     const headers = {
       Accept: "application/vnd.github.v3+json",
     };
 
-    // Use token if available (helps with rate limits)
     if (githubToken) {
       headers["Authorization"] = `Bearer ${githubToken}`;
     }
@@ -101,34 +105,57 @@ async function getFileSha() {
 
     if (!response.ok) {
       if (response.status === 404) {
-        return null; // File doesn't exist yet
+        log("posts.json not found, starting fresh");
+        serverPosts = [];
+        fileSha = null;
+        return [];
       }
       throw new Error(`HTTP ${response.status}`);
     }
 
     const data = await response.json();
     fileSha = data.sha;
-    return data.sha;
+
+    const decoded = decodeURIComponent(
+      escape(atob(data.content.replace(/\n/g, "")))
+    );
+    const posts = JSON.parse(decoded);
+
+    serverPosts = JSON.parse(JSON.stringify(posts));
+    log("Loaded", posts.length, "posts from GitHub");
+    return posts;
   } catch (err) {
-    console.error("Failed to get file SHA:", err);
-    return null;
+    console.error("Failed to fetch posts:", err);
+    return serverPosts;
   }
 }
 
-/**
- * Save posts.json to GitHub (requires token)
- */
 async function savePostsToGitHub(posts) {
   if (!githubToken) {
-    alert("Not authenticated! Please log in first.");
+    alert("Not authenticated!");
     return false;
   }
 
   const statusEl = showStatus("SAVING TO GITHUB...", "saving");
 
   try {
-    // Get current SHA first
-    const currentSha = await getFileSha();
+    // Get fresh SHA
+    const shaUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}?ref=${GITHUB_BRANCH}`;
+    const shaResponse = await fetch(shaUrl, {
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+
+    if (shaResponse.ok) {
+      const shaData = await shaResponse.json();
+      fileSha = shaData.sha;
+    } else if (shaResponse.status === 404) {
+      fileSha = null;
+    } else {
+      throw new Error(`Failed to get SHA: ${shaResponse.status}`);
+    }
 
     const content = JSON.stringify(posts, null, 2);
     const encodedContent = btoa(unescape(encodeURIComponent(content)));
@@ -136,14 +163,13 @@ async function savePostsToGitHub(posts) {
     const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}`;
 
     const body = {
-      message: `Update blog posts - ${new Date().toISOString()}`,
+      message: `Update blog posts — ${new Date().toISOString()}`,
       content: encodedContent,
       branch: GITHUB_BRANCH,
     };
 
-    // Include SHA if file already exists (required for updates)
-    if (currentSha) {
-      body.sha = currentSha;
+    if (fileSha) {
+      body.sha = fileSha;
     }
 
     const response = await fetch(url, {
@@ -156,54 +182,39 @@ async function savePostsToGitHub(posts) {
       body: JSON.stringify(body),
     });
 
+    const responseData = await response.json();
+
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error("GitHub API error:", errorData);
-
-      if (response.status === 409) {
-        // Conflict — SHA mismatch, refetch and retry
-        statusEl.remove();
-        showStatus("CONFLICT — RETRYING...", "error");
-        await getFileSha();
-        return await savePostsToGitHub(posts);
-      }
-
       throw new Error(
-        `GitHub API error: ${response.status} ${errorData.message || ""}`
+        `GitHub API error ${response.status}: ${responseData.message || ""}`
       );
     }
 
-    const result = await response.json();
-    fileSha = result.content.sha;
-    cachedPosts = posts;
+    fileSha = responseData.content.sha;
+    log("Save successful! New SHA:", fileSha);
 
     statusEl.remove();
-    showStatus("SAVED!", "success");
+    showStatus("PUBLISHED!", "success");
     return true;
   } catch (err) {
-    console.error("Failed to save posts:", err);
+    console.error("Failed to save:", err);
     statusEl.remove();
-    showStatus("SAVE FAILED!", "error");
-    alert(`Failed to save: ${err.message}`);
+    showStatus("PUBLISH FAILED!", "error");
+    alert(`Failed to publish: ${err.message}`);
     return false;
   }
 }
 
-/**
- * Upload an image to the repo and return its raw URL
- * Images stored in /blog-images/ folder
- */
 async function uploadImageToGitHub(base64Data, filename) {
   if (!githubToken) return null;
 
   try {
-    // Strip the data URL prefix to get pure base64
-    const pureBase64 = base64Data.replace(/^data:image\/\w+;base64,/, "");
+    log("Uploading image:", filename);
 
+    const pureBase64 = base64Data.replace(/^data:image\/\w+;base64,/, "");
     const path = `blog-images/${filename}`;
     const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}`;
 
-    // Check if file already exists
     let existingSha = null;
     try {
       const checkResponse = await fetch(url, {
@@ -217,7 +228,7 @@ async function uploadImageToGitHub(base64Data, filename) {
         existingSha = checkData.sha;
       }
     } catch {
-      // File doesn't exist, that's fine
+      // doesn't exist
     }
 
     const body = {
@@ -226,9 +237,7 @@ async function uploadImageToGitHub(base64Data, filename) {
       branch: GITHUB_BRANCH,
     };
 
-    if (existingSha) {
-      body.sha = existingSha;
-    }
+    if (existingSha) body.sha = existingSha;
 
     const response = await fetch(url, {
       method: "PUT",
@@ -240,15 +249,13 @@ async function uploadImageToGitHub(base64Data, filename) {
       body: JSON.stringify(body),
     });
 
-    if (!response.ok) {
-      throw new Error(`Image upload failed: ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
 
-    // Return the raw GitHub URL for the image
     const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${path}`;
+    log("Image uploaded:", rawUrl);
     return rawUrl;
   } catch (err) {
-    console.error("Failed to upload image:", err);
+    console.error("Image upload failed:", err);
     return null;
   }
 }
@@ -267,9 +274,7 @@ function initStars() {
   window.addEventListener("resize", resize);
 
   const stars = [];
-  const STAR_COUNT = 180;
-
-  for (let i = 0; i < STAR_COUNT; i++) {
+  for (let i = 0; i < 180; i++) {
     stars.push({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height,
@@ -348,7 +353,7 @@ function initStars() {
   animate();
 }
 
-// ============ BLOG RENDERING ============
+// ============ RENDERING ============
 function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
@@ -356,6 +361,7 @@ function escapeHtml(text) {
 }
 
 function parseMarkdown(text) {
+  if (!text) return "";
   let md = escapeHtml(text);
 
   md = md.replace(/^###### (.*)$/gm, "<h6>$1</h6>");
@@ -377,12 +383,25 @@ function parseMarkdown(text) {
   return md;
 }
 
+function getVisiblePosts() {
+  const isAdmin = sessionStorage.getItem("testpage_admin") === "true";
+
+  if (isAdmin) {
+    // Admin sees everything: local posts (including pending adds)
+    // but posts pending deletion are shown as faded
+    return localPosts;
+  } else {
+    // Visitors only see what's on the server
+    return serverPosts;
+  }
+}
+
 function renderPosts() {
   const container = document.getElementById("blog-posts");
   if (!container) return;
 
-  const posts = cachedPosts;
   const isAdmin = sessionStorage.getItem("testpage_admin") === "true";
+  const posts = getVisiblePosts();
 
   container.innerHTML = "";
 
@@ -399,9 +418,21 @@ function renderPosts() {
     const postEl = document.createElement("div");
     postEl.className = "blog-post";
 
+    const isNew = pendingAdds.includes(post.id);
+    const isDeleted = pendingDeletes.includes(post.id);
+
+    if (isNew) postEl.classList.add("unpublished");
+    if (isDeleted) postEl.classList.add("deleted-pending");
+
     let deleteBtn = "";
-    if (isAdmin) {
+    if (isAdmin && !isDeleted) {
       deleteBtn = `<button class="delete-post-btn" data-id="${post.id}" title="Delete post">&#10005;</button>`;
+    }
+
+    // Undo delete button for pending deletes
+    let undoBtn = "";
+    if (isAdmin && isDeleted) {
+      undoBtn = `<button class="delete-post-btn" data-id="${post.id}" title="Undo delete" style="background:var(--accent-green);">&#8634;</button>`;
     }
 
     let imageContent = `<span class="heart-mini">&#10084;</span>`;
@@ -416,10 +447,20 @@ function renderPosts() {
       ? `style="color:${post.titleColor};text-shadow:0 0 5px ${post.titleColor}"`
       : "";
 
-    const previewContent = parseMarkdown(post.content || "");
+    const previewContent = parseMarkdown(post.content);
+
+    const unpublishedTag = isNew
+      ? `<span class="unpublished-tag">DRAFT</span>`
+      : "";
+
+    const deletedTag = isDeleted
+      ? `<span class="unpublished-tag" style="color:var(--accent-red);text-shadow:0 0 5px var(--accent-red);">PENDING DELETE</span>`
+      : "";
 
     postEl.innerHTML = `
-      <div class="blog-post-date">${escapeHtml(post.date)}</div>
+      <div class="blog-post-date">
+        ${escapeHtml(post.date)}${unpublishedTag}${deletedTag}
+      </div>
       <div class="blog-post-body">
         <div class="blog-post-text">
           <strong ${titleStyle}>${title}</strong><br>
@@ -429,36 +470,53 @@ function renderPosts() {
           ${imageContent}
         </div>
       </div>
-      ${deleteBtn}
+      ${deleteBtn}${undoBtn}
     `;
 
-    postEl.addEventListener("click", (e) => {
-      if (e.target.closest(".delete-post-btn")) return;
-      openPostDetail(post);
-    });
+    if (!isDeleted) {
+      postEl.addEventListener("click", (e) => {
+        if (e.target.closest(".delete-post-btn")) return;
+        openPostDetail(post);
+      });
+    }
 
     container.appendChild(postEl);
   });
 
+  // Delete handlers
   if (isAdmin) {
     container.querySelectorAll(".delete-post-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
+      btn.addEventListener("click", () => {
         const id = btn.dataset.id;
-        if (confirm("Delete this post?")) {
-          await deletePost(id);
+        const isCurrentlyDeleted = pendingDeletes.includes(id);
+
+        if (isCurrentlyDeleted) {
+          // Undo the delete
+          pendingDeletes = pendingDeletes.filter((d) => d !== id);
+          log("Undo delete:", id);
+        } else {
+          // Check if this is a pending add — if so, just remove it entirely
+          if (pendingAdds.includes(id)) {
+            localPosts = localPosts.filter((p) => p.id !== id);
+            pendingAdds = pendingAdds.filter((a) => a !== id);
+            log("Removed draft:", id);
+          } else {
+            // Mark existing post for deletion
+            pendingDeletes.push(id);
+            log("Marked for deletion:", id);
+          }
         }
+
+        updatePublishButton();
+        renderPosts();
       });
     });
   }
+
+  updatePublishButton();
 }
 
-async function addPost(
-  title,
-  content,
-  color,
-  imageUrls = [],
-  titleColor = null
-) {
+function addPostLocally(title, content, color, imageUrls = [], titleColor = null) {
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
   const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -474,29 +532,55 @@ async function addPost(
     images: imageUrls,
   };
 
-  // Refetch to avoid conflicts
-  await fetchPostsFromGitHub();
-  cachedPosts.unshift(newPost);
+  localPosts.unshift(newPost);
+  pendingAdds.push(newPost.id);
 
-  const saved = await savePostsToGitHub(cachedPosts);
-  if (saved) {
-    renderPosts();
-    return true;
-  } else {
-    // Remove the post we just added since save failed
-    cachedPosts.shift();
-    return false;
-  }
+  log("Added draft post:", newPost.id, newPost.title);
+  log("Pending adds:", pendingAdds.length, "Pending deletes:", pendingDeletes.length);
+
+  updatePublishButton();
+  renderPosts();
+
+  return true;
 }
 
-async function deletePost(id) {
-  // Refetch to avoid conflicts
-  await fetchPostsFromGitHub();
-  cachedPosts = cachedPosts.filter((p) => p.id !== id);
+async function publishChanges() {
+  if (!hasPendingChanges()) return;
 
-  const saved = await savePostsToGitHub(cachedPosts);
-  if (saved) {
+  log("Publishing changes...");
+  log("Adds:", pendingAdds.length, "Deletes:", pendingDeletes.length);
+
+  // Start from fresh server state
+  await fetchPostsFromGitHub();
+
+  // Build final post list
+  let finalPosts = JSON.parse(JSON.stringify(serverPosts));
+
+  // Remove deleted posts
+  finalPosts = finalPosts.filter((p) => !pendingDeletes.includes(p.id));
+
+  // Add new posts at the top
+  const newPosts = localPosts.filter((p) => pendingAdds.includes(p.id));
+  finalPosts = [...newPosts, ...finalPosts];
+
+  log("Final post count:", finalPosts.length);
+
+  // Save to GitHub
+  const success = await savePostsToGitHub(finalPosts);
+
+  if (success) {
+    // Update all state
+    serverPosts = JSON.parse(JSON.stringify(finalPosts));
+    localPosts = JSON.parse(JSON.stringify(finalPosts));
+    pendingAdds = [];
+    pendingDeletes = [];
+
+    updatePublishButton();
     renderPosts();
+    log("Publish complete!");
+  } else {
+    // Restore local state from server
+    log("Publish failed, keeping local changes");
   }
 }
 
@@ -523,7 +607,7 @@ function openPostDetail(post) {
   detailContent.innerHTML = `
     <h2 ${titleStyle}>${escapeHtml(post.title || "BLOG POST")}</h2>
     <div class="post-detail-date">${escapeHtml(post.date)}</div>
-    <div class="post-detail-content" style="color: ${post.color || "inherit"}">${parseMarkdown(post.content || "")}</div>
+    <div class="post-detail-content" style="color: ${post.color || "inherit"}">${parseMarkdown(post.content)}</div>
     ${imagesHtml}
   `;
 
@@ -532,6 +616,37 @@ function openPostDetail(post) {
   });
 
   detailModal.classList.remove("hidden");
+}
+
+function showPublishModal() {
+  const modal = document.getElementById("publish-modal");
+  const summary = document.getElementById("publish-summary");
+  if (!modal || !summary) return;
+
+  let html = "";
+
+  if (pendingAdds.length > 0) {
+    html += `<p><span class="summary-add">+ ${pendingAdds.length} NEW POST${pendingAdds.length > 1 ? "S" : ""}</span></p>`;
+    pendingAdds.forEach((id) => {
+      const post = localPosts.find((p) => p.id === id);
+      if (post) {
+        html += `<p style="font-size:0.55rem;color:var(--text-muted);">  "${escapeHtml(post.title || "UNTITLED")}"</p>`;
+      }
+    });
+  }
+
+  if (pendingDeletes.length > 0) {
+    html += `<p style="margin-top:8px;"><span class="summary-delete">- ${pendingDeletes.length} DELETED POST${pendingDeletes.length > 1 ? "S" : ""}</span></p>`;
+    pendingDeletes.forEach((id) => {
+      const post = localPosts.find((p) => p.id === id);
+      if (post) {
+        html += `<p style="font-size:0.55rem;color:var(--text-muted);">  "${escapeHtml(post.title || "UNTITLED")}"</p>`;
+      }
+    });
+  }
+
+  summary.innerHTML = html;
+  modal.classList.remove("hidden");
 }
 
 // ============ LIGHTBOX ============
@@ -555,10 +670,7 @@ function closeLightbox() {
   }
 }
 
-if (lightboxClose) {
-  lightboxClose.addEventListener("click", closeLightbox);
-}
-
+if (lightboxClose) lightboxClose.addEventListener("click", closeLightbox);
 if (lightboxModal) {
   lightboxModal.addEventListener("click", (e) => {
     if (e.target !== lightboxImg) closeLightbox();
@@ -577,17 +689,14 @@ function compressImage(file, maxWidth = 800, quality = 0.7) {
         const canvas = document.createElement("canvas");
         let width = img.width;
         let height = img.height;
-
         if (width > maxWidth) {
           height = Math.round((height * maxWidth) / width);
           width = maxWidth;
         }
-
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, width, height);
-
         resolve(canvas.toDataURL("image/jpeg", quality));
       };
       img.onerror = (err) => reject(err);
@@ -603,17 +712,13 @@ let historyIndex = -1;
 function saveHistory() {
   const textarea = document.getElementById("post-content");
   if (!textarea) return;
-
   const val = textarea.value;
   if (historyIndex >= 0 && historyStack[historyIndex] === val) return;
-
   if (historyIndex < historyStack.length - 1) {
     historyStack = historyStack.slice(0, historyIndex + 1);
   }
-
   historyStack.push(val);
   historyIndex++;
-
   if (historyStack.length > 50) {
     historyStack.shift();
     historyIndex--;
@@ -637,17 +742,12 @@ function redo() {
 function insertMarkdown(startTag, endTag) {
   const textarea = document.getElementById("post-content");
   if (!textarea) return;
-
   saveHistory();
-
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
-  const text = textarea.value;
-  const selection = text.substring(start, end);
-  const replacement = startTag + selection + endTag;
-  textarea.setRangeText(replacement, start, end, "select");
+  const selection = textarea.value.substring(start, end);
+  textarea.setRangeText(startTag + selection + endTag, start, end, "select");
   textarea.focus();
-
   saveHistory();
 }
 
@@ -657,19 +757,15 @@ function insertColor() {
   insertMarkdown(`{color:${color}}`, `{/color}`);
 }
 
-// Toolbar button listeners
 document.addEventListener("DOMContentLoaded", () => {
   const btnBold = document.getElementById("btn-bold");
-  if (btnBold)
-    btnBold.addEventListener("click", () => insertMarkdown("**", "**"));
+  if (btnBold) btnBold.addEventListener("click", () => insertMarkdown("**", "**"));
 
   const btnItalic = document.getElementById("btn-italic");
-  if (btnItalic)
-    btnItalic.addEventListener("click", () => insertMarkdown("*", "*"));
+  if (btnItalic) btnItalic.addEventListener("click", () => insertMarkdown("*", "*"));
 
   const btnHeader = document.getElementById("btn-header");
-  if (btnHeader)
-    btnHeader.addEventListener("click", () => insertMarkdown("### ", ""));
+  if (btnHeader) btnHeader.addEventListener("click", () => insertMarkdown("### ", ""));
 
   const btnColorApply = document.getElementById("btn-color-apply");
   if (btnColorApply) btnColorApply.addEventListener("click", insertColor);
@@ -700,43 +796,46 @@ async function attemptLogin(username, password) {
 function setAdminMode(enabled) {
   const loginBtn = document.getElementById("admin-login-btn");
   const logoutBtn = document.getElementById("admin-logout-btn");
-  const newPostBtn = document.getElementById("new-post-btn");
+  const adminActions = document.getElementById("admin-blog-actions");
 
   if (enabled) {
     sessionStorage.setItem("testpage_admin", "true");
+    // Sync local posts with server
+    localPosts = JSON.parse(JSON.stringify(serverPosts));
+    pendingAdds = [];
+    pendingDeletes = [];
   } else {
     sessionStorage.removeItem("testpage_admin");
     githubToken = null;
+    pendingAdds = [];
+    pendingDeletes = [];
   }
 
   if (loginBtn) loginBtn.classList.toggle("hidden", enabled);
   if (logoutBtn) logoutBtn.classList.toggle("hidden", !enabled);
-  if (newPostBtn) newPostBtn.classList.toggle("hidden", !enabled);
+  if (adminActions) adminActions.classList.toggle("hidden", !enabled);
 
+  updatePublishButton();
   renderPosts();
 }
 
-// ============ MAIN INITIALIZATION ============
+// ============ MAIN INIT ============
 document.addEventListener("DOMContentLoaded", async () => {
   initStars();
 
-  // Load posts from GitHub on page load
+  // Load from GitHub
   const statusEl = showStatus("LOADING POSTS...", "saving");
   try {
     await fetchPostsFromGitHub();
+    localPosts = JSON.parse(JSON.stringify(serverPosts));
     statusEl.remove();
   } catch {
     statusEl.remove();
-    showStatus("FAILED TO LOAD POSTS", "error");
+    showStatus("FAILED TO LOAD", "error");
   }
   renderPosts();
 
-  // Restore admin session
-  if (sessionStorage.getItem("testpage_admin") === "true") {
-    // Token is lost on refresh (sessionStorage doesn't store it)
-    // Admin will need to re-login to make changes
-    setAdminMode(false);
-  }
+  setAdminMode(false);
 
   // --- Login Modal ---
   const loginModal = document.getElementById("login-modal");
@@ -761,9 +860,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   if (loginCancel) {
-    loginCancel.addEventListener("click", () => {
-      loginModal.classList.add("hidden");
-    });
+    loginCancel.addEventListener("click", () => loginModal.classList.add("hidden"));
   }
 
   if (loginSubmit) {
@@ -782,7 +879,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       loginSubmit.disabled = true;
 
       const credentialsOk = await attemptLogin(username, password);
-
       if (!credentialsOk) {
         loginError.textContent = "WRONG CREDENTIALS!";
         loginError.classList.remove("hidden");
@@ -791,7 +887,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
-      // Verify the GitHub token works
+      // Verify token
       try {
         const testResponse = await fetch(
           `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`,
@@ -811,7 +907,6 @@ document.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        // Check if token has push permission
         const repoData = await testResponse.json();
         if (!repoData.permissions || !repoData.permissions.push) {
           loginError.textContent = "TOKEN LACKS WRITE ACCESS!";
@@ -820,15 +915,14 @@ document.addEventListener("DOMContentLoaded", async () => {
           loginSubmit.disabled = false;
           return;
         }
-      } catch (err) {
-        loginError.textContent = "TOKEN VERIFICATION FAILED!";
+      } catch {
+        loginError.textContent = "TOKEN CHECK FAILED!";
         loginError.classList.remove("hidden");
         loginSubmit.textContent = "LOGIN";
         loginSubmit.disabled = false;
         return;
       }
 
-      // All good — store token in memory and enable admin
       githubToken = token;
       loginModal.classList.add("hidden");
       setAdminMode(true);
@@ -839,21 +933,25 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Enter in token field triggers login
-  if (tokenInput) {
-    tokenInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") loginSubmit.click();
-    });
-  }
-
   if (passwordInput) {
     passwordInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") tokenInput.focus();
     });
   }
 
+  if (tokenInput) {
+    tokenInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") loginSubmit.click();
+    });
+  }
+
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () => {
+      if (hasPendingChanges()) {
+        if (!confirm("You have unpublished changes! They will be lost. Logout anyway?")) {
+          return;
+        }
+      }
       setAdminMode(false);
       showStatus("LOGGED OUT", "success");
     });
@@ -898,9 +996,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   if (postCancel) {
-    postCancel.addEventListener("click", () => {
-      newPostModal.classList.add("hidden");
-    });
+    postCancel.addEventListener("click", () => newPostModal.classList.add("hidden"));
   }
 
   if (postSubmit) {
@@ -910,15 +1006,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       const titleColor = document.getElementById("post-title-color").value;
       const color = document.getElementById("post-color").value;
       const imgInput = document.getElementById("post-image");
-      const hasImages =
-        imgInput && imgInput.files && imgInput.files.length > 0;
+      const hasImages = imgInput && imgInput.files && imgInput.files.length > 0;
 
       if (!content && !hasImages) {
         alert("Enter text or select an image!");
         return;
       }
 
-      postSubmit.textContent = "UPLOADING...";
+      postSubmit.textContent = "PROCESSING...";
       postSubmit.disabled = true;
 
       const imageUrls = [];
@@ -926,53 +1021,41 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (hasImages) {
         for (let i = 0; i < imgInput.files.length; i++) {
           try {
-            // Compress the image first
+            showStatus(`COMPRESSING IMAGE ${i + 1}...`, "saving");
             const compressed = await compressImage(imgInput.files[i]);
 
-            // Generate unique filename
+            showStatus(`UPLOADING IMAGE ${i + 1}...`, "saving");
             const timestamp = Date.now();
             const filename = `img-${timestamp}-${i}.jpg`;
-
-            // Upload to GitHub repo
             const url = await uploadImageToGitHub(compressed, filename);
+
             if (url) {
               imageUrls.push(url);
-            } else {
-              console.error("Failed to upload image", i);
             }
           } catch (e) {
-            console.error("Failed to process image:", e);
+            console.error("Image failed:", e);
           }
         }
+        showStatus("IMAGES UPLOADED!", "success");
       }
 
-      const success = await addPost(
-        title,
-        content,
-        color,
-        imageUrls,
-        titleColor
-      );
+      addPostLocally(title, content, color, imageUrls, titleColor);
 
-      if (success) {
-        newPostModal.classList.add("hidden");
-        postContentInput.value = "";
+      newPostModal.classList.add("hidden");
+      postContentInput.value = "";
 
-        const titleEl = document.getElementById("post-title");
-        if (titleEl) titleEl.value = "";
-
-        const titleColorEl = document.getElementById("post-title-color");
-        if (titleColorEl) titleColorEl.value = "#ff00de";
-
-        imgInput.value = "";
-        const preview = document.getElementById("image-preview");
-        if (preview) {
-          preview.innerHTML = "";
-          preview.classList.remove("show");
-        }
+      const titleEl = document.getElementById("post-title");
+      if (titleEl) titleEl.value = "";
+      const titleColorEl = document.getElementById("post-title-color");
+      if (titleColorEl) titleColorEl.value = "#ff00de";
+      imgInput.value = "";
+      const preview = document.getElementById("image-preview");
+      if (preview) {
+        preview.innerHTML = "";
+        preview.classList.remove("show");
       }
 
-      postSubmit.textContent = "POST";
+      postSubmit.textContent = "ADD POST";
       postSubmit.disabled = false;
     });
   }
@@ -980,6 +1063,46 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (postContentInput) {
     postContentInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.ctrlKey) postSubmit.click();
+    });
+  }
+
+  // --- Publish Button ---
+  const publishBtn = document.getElementById("publish-btn");
+  if (publishBtn) {
+    publishBtn.addEventListener("click", () => {
+      if (hasPendingChanges()) {
+        showPublishModal();
+      }
+    });
+  }
+
+  // --- Publish Modal ---
+  const publishModal = document.getElementById("publish-modal");
+  const publishConfirm = document.getElementById("publish-confirm-btn");
+  const publishCancel = document.getElementById("publish-cancel-btn");
+
+  if (publishConfirm) {
+    publishConfirm.addEventListener("click", async () => {
+      publishConfirm.textContent = "PUBLISHING...";
+      publishConfirm.disabled = true;
+
+      await publishChanges();
+
+      publishConfirm.textContent = "PUBLISH";
+      publishConfirm.disabled = false;
+      publishModal.classList.add("hidden");
+    });
+  }
+
+  if (publishCancel) {
+    publishCancel.addEventListener("click", () => {
+      publishModal.classList.add("hidden");
+    });
+  }
+
+  if (publishModal) {
+    publishModal.addEventListener("click", (e) => {
+      if (e.target === publishModal) publishModal.classList.add("hidden");
     });
   }
 
@@ -997,9 +1120,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const postDetailClose = document.getElementById("post-detail-close");
 
   if (postDetailClose) {
-    postDetailClose.addEventListener("click", () => {
-      postDetailModal.classList.add("hidden");
-    });
+    postDetailClose.addEventListener("click", () => postDetailModal.classList.add("hidden"));
   }
 
   if (postDetailModal) {
@@ -1008,7 +1129,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Image upload preview
+  // Image preview
   const postImageInput = document.getElementById("post-image");
   const imagePreview = document.getElementById("image-preview");
 
@@ -1016,7 +1137,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     postImageInput.addEventListener("change", () => {
       imagePreview.innerHTML = "";
       const files = Array.from(postImageInput.files);
-
       if (files.length > 0) {
         imagePreview.classList.add("show");
         files.forEach((file) => {
@@ -1034,22 +1154,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Escape key closes modals
+  // Escape key
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (lightboxModal && !lightboxModal.classList.contains("hidden")) {
         closeLightbox();
         return;
       }
-      if (loginModal && !loginModal.classList.contains("hidden")) {
-        loginModal.classList.add("hidden");
-      }
-      if (newPostModal && !newPostModal.classList.contains("hidden")) {
-        newPostModal.classList.add("hidden");
-      }
-      if (postDetailModal && !postDetailModal.classList.contains("hidden")) {
-        postDetailModal.classList.add("hidden");
-      }
+      [loginModal, newPostModal, postDetailModal, publishModal].forEach((m) => {
+        if (m && !m.classList.contains("hidden")) m.classList.add("hidden");
+      });
+    }
+  });
+
+  // Warn before leaving with unsaved changes
+  window.addEventListener("beforeunload", (e) => {
+    if (hasPendingChanges()) {
+      e.preventDefault();
+      e.returnValue = "";
     }
   });
 });
