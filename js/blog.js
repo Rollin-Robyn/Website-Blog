@@ -1,6 +1,7 @@
 /* ============================================
    testPage — Blog Page Logic
    With post queue system for batch publishing
+   and batch deletion
 ============================================ */
 
 const GITHUB_OWNER = "Rollin-Robyn";
@@ -27,6 +28,9 @@ let starsAnimationId = null;
 
 // ============ POST QUEUE ============
 let pendingQueue = [];
+
+// ============ DELETE QUEUE ============
+let deleteQueue = [];
 
 function log(...args) {
   if (DEBUG) console.log("[BLOG]", ...args);
@@ -83,41 +87,59 @@ async function fetchPostsFromGitHub() {
 async function savePostsToGitHub(posts) {
   if (!githubToken) { alert("Not authenticated!"); return false; }
   const statusEl = showStatus("SAVING...", "saving");
-  try {
-    const shaUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}?ref=${GITHUB_BRANCH}`;
-    const shaResp = await fetch(shaUrl, {
-      headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github.v3+json" },
-    });
-    if (shaResp.ok) fileSha = (await shaResp.json()).sha;
-    else if (shaResp.status === 404) fileSha = null;
-    else throw new Error(`SHA failed: ${shaResp.status}`);
 
-    const content = JSON.stringify(posts, null, 2);
-    const encoded = btoa(unescape(encodeURIComponent(content)));
-    const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}`;
-    const body = { message: `Update blog — ${new Date().toISOString()}`, content: encoded, branch: GITHUB_BRANCH };
-    if (fileSha) body.sha = fileSha;
+  const maxRetries = 3;
 
-    const resp = await fetch(url, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const respData = await resp.json();
-    if (!resp.ok) throw new Error(`API error ${resp.status}: ${respData.message || ""}`);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const shaUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}?ref=${GITHUB_BRANCH}&_t=${Date.now()}`;
+      const shaResp = await fetch(shaUrl, {
+        headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github.v3+json" },
+        cache: "no-store",
+      });
+      if (shaResp.ok) fileSha = (await shaResp.json()).sha;
+      else if (shaResp.status === 404) fileSha = null;
+      else throw new Error(`SHA fetch failed: ${shaResp.status}`);
 
-    fileSha = respData.content.sha;
-    cachedPosts = posts;
-    statusEl.remove();
-    showStatus("SAVED!", "success");
-    return true;
-  } catch (err) {
-    console.error("Save failed:", err);
-    statusEl.remove();
-    showStatus("SAVE FAILED!", "error");
-    alert(`Save failed: ${err.message}`);
-    return false;
+      const content = JSON.stringify(posts, null, 2);
+      const encoded = btoa(unescape(encodeURIComponent(content)));
+      const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}`;
+      const body = { message: `Update blog — ${new Date().toISOString()}`, content: encoded, branch: GITHUB_BRANCH };
+      if (fileSha) body.sha = fileSha;
+
+      const resp = await fetch(url, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github.v3+json", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const respData = await resp.json();
+
+      if (resp.status === 409 && attempt < maxRetries) {
+        log(`SHA conflict on attempt ${attempt}, retrying...`);
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+        continue;
+      }
+
+      if (!resp.ok) throw new Error(`API error ${resp.status}: ${respData.message || ""}`);
+
+      fileSha = respData.content.sha;
+      cachedPosts = posts;
+      statusEl.remove();
+      showStatus("SAVED!", "success");
+      return true;
+    } catch (err) {
+      if (attempt === maxRetries) {
+        console.error("Save failed:", err);
+        statusEl.remove();
+        showStatus("SAVE FAILED!", "error");
+        alert(`Save failed: ${err.message}`);
+        return false;
+      }
+      log(`Save attempt ${attempt} failed, retrying...`);
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
   }
+  return false;
 }
 
 async function uploadImageToGitHub(base64Data, filename) {
@@ -331,9 +353,18 @@ function renderBlogPage() {
     card.className = "blog-card";
     card.style.animationDelay = `${index * 0.05}s`;
 
-    let deleteBtn = "";
+    const isMarkedForDelete = deleteQueue.some((p) => p.id === post.id);
+    if (isMarkedForDelete) {
+      card.classList.add("marked-for-delete");
+    }
+
+    let adminBtns = "";
     if (isAdmin) {
-      deleteBtn = `<button class="delete-post-btn" data-id="${post.id}" title="Delete">&#10005;</button>`;
+      if (isMarkedForDelete) {
+        adminBtns = `<button class="unmark-delete-btn" data-id="${post.id}" title="Unmark">&#8635;</button>`;
+      } else {
+        adminBtns = `<button class="delete-post-btn" data-id="${post.id}" title="Mark for deletion">&#10005;</button>`;
+      }
     }
 
     const images = post.images || (post.image ? [post.image] : []);
@@ -363,11 +394,11 @@ function renderBlogPage() {
           </div>
         </div>
       </div>
-      ${deleteBtn}
+      ${adminBtns}
     `;
 
     card.addEventListener("click", (e) => {
-      if (e.target.closest(".delete-post-btn")) return;
+      if (e.target.closest(".delete-post-btn") || e.target.closest(".unmark-delete-btn")) return;
       openPostDetail(post);
     });
 
@@ -376,8 +407,14 @@ function renderBlogPage() {
 
   if (isAdmin) {
     grid.querySelectorAll(".delete-post-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        if (confirm("Delete this post?")) await deletePost(btn.dataset.id);
+      btn.addEventListener("click", () => {
+        addToDeleteQueue(btn.dataset.id);
+      });
+    });
+
+    grid.querySelectorAll(".unmark-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        removeFromDeleteQueue(btn.dataset.id);
       });
     });
   }
@@ -431,7 +468,7 @@ function openPostDetail(post) {
   modal.classList.remove("hidden");
 }
 
-// ============ QUEUE SYSTEM ============
+// ============ QUEUE SYSTEM (PUBLISH) ============
 function addToQueue(postData) {
   pendingQueue.push(postData);
   log("Added to queue. Queue size:", pendingQueue.length);
@@ -593,13 +630,131 @@ async function publishAll() {
   }
 }
 
-// ============ POST CRUD ============
-async function deletePost(id) {
-  await fetchPostsFromGitHub();
-  cachedPosts = cachedPosts.filter((p) => p.id !== id);
-  const saved = await savePostsToGitHub(cachedPosts);
-  if (saved) resetAndRender();
-  else { await fetchPostsFromGitHub(); resetAndRender(); }
+// ============ DELETE QUEUE SYSTEM ============
+function addToDeleteQueue(postId) {
+  const post = cachedPosts.find((p) => p.id === postId);
+  if (!post) return;
+  if (deleteQueue.some((p) => p.id === postId)) return;
+
+  deleteQueue.push(post);
+  log("Marked for deletion:", post.title, "| Delete queue:", deleteQueue.length);
+  renderDeleteQueue();
+  renderBlogPage();
+  showStatus(`MARKED FOR DELETION (${deleteQueue.length} SELECTED)`, "error");
+}
+
+function removeFromDeleteQueue(postId) {
+  deleteQueue = deleteQueue.filter((p) => p.id !== postId);
+  log("Unmarked from deletion. Delete queue:", deleteQueue.length);
+  renderDeleteQueue();
+  renderBlogPage();
+  showStatus("UNMARKED FROM DELETION", "success");
+}
+
+function clearDeleteQueue() {
+  deleteQueue = [];
+  log("Delete queue cleared");
+  renderDeleteQueue();
+  renderBlogPage();
+  showStatus("DELETE QUEUE CLEARED", "success");
+}
+
+function renderDeleteQueue() {
+  const panel = document.getElementById("delete-queue-panel");
+  const list = document.getElementById("delete-posts-list");
+  const countEl = document.getElementById("delete-count");
+  const deleteBtn = document.getElementById("delete-all-btn");
+
+  if (!panel || !list) return;
+
+  const isAdmin = sessionStorage.getItem("testpage_admin") === "true";
+
+  if (deleteQueue.length === 0 || !isAdmin) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  panel.classList.remove("hidden");
+  if (countEl) countEl.textContent = deleteQueue.length;
+  if (deleteBtn) deleteBtn.disabled = deleteQueue.length === 0;
+
+  list.innerHTML = "";
+
+  deleteQueue.forEach((post, index) => {
+    const item = document.createElement("div");
+    item.className = "delete-post-item";
+
+    const images = post.images || (post.image ? [post.image] : []);
+    let thumbHtml = `<span class="heart-mini">&#10084;</span>`;
+    if (images.length > 0) {
+      thumbHtml = `<img src="${images[0]}" alt="thumb">`;
+    }
+
+    const title = post.title ? escapeHtml(post.title) : "UNTITLED POST";
+
+    item.innerHTML = `
+      <span class="delete-post-number">#${index + 1}</span>
+      <div class="delete-post-thumb">${thumbHtml}</div>
+      <div class="delete-post-info">
+        <div class="delete-post-title">${title}</div>
+        <div class="delete-post-meta">${escapeHtml(post.date)}</div>
+      </div>
+      <button class="delete-post-unmark" data-id="${post.id}" title="Unmark">&#8635;</button>
+    `;
+
+    list.appendChild(item);
+  });
+
+  list.querySelectorAll(".delete-post-unmark").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      removeFromDeleteQueue(btn.dataset.id);
+    });
+  });
+}
+
+async function deleteAllMarked() {
+  if (deleteQueue.length === 0) return;
+  if (!githubToken) { alert("Not authenticated!"); return; }
+
+  const deleteBtn = document.getElementById("delete-all-btn");
+  if (deleteBtn) {
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = "DELETING...";
+    deleteBtn.classList.add("deleting");
+  }
+
+  try {
+    showStatus("FETCHING LATEST POSTS...", "saving");
+    await fetchPostsFromGitHub();
+
+    const idsToDelete = new Set(deleteQueue.map((p) => p.id));
+    const updatedPosts = cachedPosts.filter((p) => !idsToDelete.has(p.id));
+    const deletedCount = cachedPosts.length - updatedPosts.length;
+
+    showStatus(`DELETING ${deletedCount} POSTS...`, "saving");
+
+    const saved = await savePostsToGitHub(updatedPosts);
+
+    if (saved) {
+      deleteQueue = [];
+      renderDeleteQueue();
+      resetAndRender();
+      showStatus(`DELETED ${deletedCount} POST${deletedCount !== 1 ? "S" : ""}!`, "success");
+      log("Deleted", deletedCount, "posts successfully");
+    } else {
+      await fetchPostsFromGitHub();
+      showStatus("DELETE FAILED!", "error");
+    }
+  } catch (err) {
+    console.error("Delete failed:", err);
+    showStatus("DELETE FAILED!", "error");
+  }
+
+  if (deleteBtn) {
+    deleteBtn.disabled = deleteQueue.length === 0;
+    deleteBtn.textContent = "▼ DELETE ALL";
+    deleteBtn.classList.remove("deleting");
+  }
 }
 
 // ============ LIGHTBOX ============
@@ -821,6 +976,7 @@ function setAdminMode(enabled) {
     sessionStorage.removeItem("testpage_admin");
     githubToken = null;
     pendingQueue = [];
+    deleteQueue = [];
   }
 
   if (loginBtn) loginBtn.classList.toggle("hidden", enabled);
@@ -828,6 +984,7 @@ function setAdminMode(enabled) {
   if (newPostBtn) newPostBtn.classList.toggle("hidden", !enabled);
 
   renderQueue();
+  renderDeleteQueue();
   resetAndRender();
 }
 
@@ -958,8 +1115,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () => {
-      if (pendingQueue.length > 0) {
-        if (!confirm(`You have ${pendingQueue.length} unpublished post(s). Logout anyway? They will be lost.`)) {
+      const totalPending = pendingQueue.length + deleteQueue.length;
+      if (totalPending > 0) {
+        if (!confirm(`You have ${pendingQueue.length} unpublished and ${deleteQueue.length} pending deletions. Logout anyway? They will be lost.`)) {
           return;
         }
       }
@@ -968,7 +1126,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // New post — adds to queue instead of publishing
+  // New post — adds to queue
   const newPostModal = document.getElementById("new-post-modal");
   const newPostBtn = document.getElementById("new-post-btn");
   const postSubmit = document.getElementById("post-submit-btn");
@@ -1063,13 +1221,35 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Clear queue
+  // Clear publish queue
   const clearQueueBtn = document.getElementById("clear-queue-btn");
   if (clearQueueBtn) {
     clearQueueBtn.addEventListener("click", () => {
       if (pendingQueue.length === 0) return;
       if (confirm(`Remove all ${pendingQueue.length} pending posts from queue?`)) {
         clearQueue();
+      }
+    });
+  }
+
+  // Delete all marked
+  const deleteAllBtn = document.getElementById("delete-all-btn");
+  if (deleteAllBtn) {
+    deleteAllBtn.addEventListener("click", async () => {
+      if (deleteQueue.length === 0) return;
+      const count = deleteQueue.length;
+      if (!confirm(`Permanently delete ${count} post${count !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+      await deleteAllMarked();
+    });
+  }
+
+  // Clear delete queue
+  const clearDeleteBtn = document.getElementById("clear-delete-btn");
+  if (clearDeleteBtn) {
+    clearDeleteBtn.addEventListener("click", () => {
+      if (deleteQueue.length === 0) return;
+      if (confirm(`Unmark all ${deleteQueue.length} posts from deletion?`)) {
+        clearDeleteQueue();
       }
     });
   }

@@ -42,6 +42,24 @@
         <div id="pending-posts-list" class="pending-posts-list"></div>
       </div>
 
+      <!-- ========== DELETE QUEUE PANEL ========== -->
+      <div id="delete-queue-panel" class="delete-queue-panel panel hidden">
+        <div class="delete-queue-header">
+          <h2 class="panel-title">
+            MARKED FOR DELETION: <span id="delete-count" class="delete-count">0</span>
+          </h2>
+          <div class="delete-queue-actions">
+            <button id="delete-all-btn" class="admin-action-btn delete-all-btn" disabled>
+              &#9660; DELETE ALL
+            </button>
+            <button id="clear-delete-btn" class="btn-secondary clear-queue-btn">
+              UNMARK ALL
+            </button>
+          </div>
+        </div>
+        <div id="delete-posts-list" class="delete-posts-list"></div>
+      </div>
+
       <!-- ========== SEARCH & FILTER ========== -->
       <div class="blog-toolbar panel">
         <div class="search-box">

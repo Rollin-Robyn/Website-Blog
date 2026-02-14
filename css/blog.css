@@ -525,3 +525,244 @@ body.no-glow .pending-post-remove:hover { box-shadow: none; }
     flex-wrap: wrap;
   }
 }
+
+/* ============================
+   DELETE QUEUE PANEL
+============================ */
+.delete-queue-panel {
+  border-color: var(--accent-red);
+  background: linear-gradient(135deg, var(--bg-panel) 0%, rgba(255, 23, 68, 0.03) 100%);
+  animation: queue-panel-in 0.4s ease-out;
+}
+
+.delete-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.delete-queue-header .panel-title {
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.delete-count {
+  color: var(--accent-red);
+  text-shadow: 0 0 8px var(--accent-red);
+  font-size: 1.1rem;
+}
+
+.delete-queue-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.delete-all-btn {
+  background: var(--accent-red);
+  color: white;
+  font-size: 0.6rem;
+  padding: 6px 14px;
+  letter-spacing: 1px;
+  transition: all 0.2s;
+}
+
+.delete-all-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.delete-all-btn:not(:disabled):hover {
+  box-shadow: 0 0 18px var(--accent-red);
+  transform: scale(1.05);
+}
+
+.delete-all-btn.deleting {
+  animation: delete-pulse 1s ease-in-out infinite;
+}
+
+@keyframes delete-pulse {
+  0%, 100% { box-shadow: 0 0 5px var(--accent-red); }
+  50% { box-shadow: 0 0 25px var(--accent-red); }
+}
+
+.delete-posts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.delete-posts-list::-webkit-scrollbar { width: 6px; }
+.delete-posts-list::-webkit-scrollbar-track { background: var(--bg-dark); }
+.delete-posts-list::-webkit-scrollbar-thumb { background: var(--accent-red); }
+
+.delete-post-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-dark);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  animation: pending-item-in 0.3s ease-out;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.delete-post-item:hover {
+  border-color: var(--accent-red);
+  background: rgba(255, 23, 68, 0.05);
+}
+
+.delete-post-number {
+  font-size: 0.7rem;
+  color: var(--accent-red);
+  text-shadow: 0 0 5px var(--accent-red);
+  min-width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.delete-post-thumb {
+  width: 40px;
+  height: 40px;
+  background: var(--bg-accent);
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.delete-post-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.delete-post-thumb .heart-mini {
+  font-size: 1.2rem;
+}
+
+.delete-post-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.delete-post-title {
+  font-size: 0.65rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.delete-post-meta {
+  font-size: 0.5rem;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.delete-post-unmark {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--accent-green);
+  font-family: var(--font-pixel);
+  font-size: 0.65rem;
+  padding: 4px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.delete-post-unmark:hover {
+  background: var(--accent-green);
+  color: var(--bg-dark);
+  border-color: var(--accent-green);
+  box-shadow: 0 0 8px rgba(57, 255, 20, 0.4);
+}
+
+/* Marked-for-delete card style */
+.blog-card.marked-for-delete {
+  border-color: var(--accent-red);
+  opacity: 0.6;
+  position: relative;
+}
+
+.blog-card.marked-for-delete::after {
+  content: "MARKED FOR DELETION";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 23, 68, 0.08);
+  font-family: var(--font-pixel);
+  font-size: 0.6rem;
+  color: var(--accent-red);
+  text-shadow: 0 0 8px var(--accent-red);
+  letter-spacing: 2px;
+  pointer-events: none;
+}
+
+.blog-card.marked-for-delete:hover {
+  border-color: var(--accent-red);
+  box-shadow: 0 0 15px rgba(255, 23, 68, 0.15);
+}
+
+/* Unmark button on cards */
+.unmark-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  background: var(--accent-green);
+  color: var(--bg-dark);
+  border: none;
+  font-family: var(--font-pixel);
+  font-size: 0.65rem;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.unmark-delete-btn:hover {
+  box-shadow: 0 0 8px rgba(57, 255, 20, 0.5);
+}
+
+/* No-glow overrides */
+body.no-glow .delete-count { text-shadow: none; }
+body.no-glow .delete-post-number { text-shadow: none; }
+body.no-glow .delete-all-btn:not(:disabled):hover { box-shadow: none; }
+body.no-glow .delete-all-btn.deleting { animation: none; }
+body.no-glow .delete-post-unmark:hover { box-shadow: none; }
+body.no-glow .blog-card.marked-for-delete::after { text-shadow: none; }
+body.no-glow .blog-card.marked-for-delete:hover { box-shadow: none; }
+body.no-glow .unmark-delete-btn:hover { box-shadow: none; }
+
+@media (max-width: 580px) {
+  .delete-queue-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .delete-queue-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .delete-post-item {
+    flex-wrap: wrap;
+  }
+}
