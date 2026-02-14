@@ -4,8 +4,8 @@
 ============================================ */
 
 // ============ CONFIGURATION ============
-const GITHUB_OWNER = "YOUR_GITHUB_USERNAME";
-const GITHUB_REPO = "YOUR_REPO_NAME";
+const GITHUB_OWNER = "Rollin-Robyn";
+const GITHUB_REPO = "Website-Blog";
 const GITHUB_BRANCH = "main";
 const POSTS_FILE_PATH = "posts.json";
 const DEBUG = true;
