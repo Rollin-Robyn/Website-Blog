@@ -132,7 +132,6 @@ body::after {
   border: 2px solid var(--border-color);
   padding: 14px;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   min-width: 85px;
@@ -157,13 +156,6 @@ body::after {
   30% { transform: scale(1); }
   45% { transform: scale(1.1); }
   60% { transform: scale(1); }
-}
-
-.wip-label {
-  font-size: 0.8rem;
-  color: white;
-  margin-top: 6px;
-  letter-spacing: 2px;
 }
 
 .welcome-banner {
