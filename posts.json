@@ -1,5 +1,16 @@
 [
   {
+    "id": "post-1771086005592",
+    "date": "14/02/26",
+    "title": "HOLA A TODOS !!",
+    "titleColor": "#fff93d",
+    "content": "He estado un poco ocupado pero ya tengo una manera de publicar mi dia a dia y cosas interesantes que haga!\n\nHoy mirando por la ventana me fije en como de bonito se veia el {color:#ffc370}atardecer{/color} desde aqui, la {color:#9efdff}nieve{/color} hace que se vea muy diferente a lo que estoy acostumbrado.\n\nMirad!!",
+    "color": "#ffffff",
+    "images": [
+      "https://raw.githubusercontent.com/Rollin-Robyn/Website-Blog/main/blog-images/img-1771086004032-0.jpg"
+    ]
+  },
+  {
     "id": "post-1771079274646",
     "date": "14/02/26",
     "title": "Multipost Test 3",
