@@ -91,13 +91,23 @@
             </button>
           </div>
           <div id="blog-posts" class="blog-posts">
-            <!-- Posts rendered by JS -->
+            <p
+              style="
+                font-size: 0.7rem;
+                color: var(--text-muted);
+                text-align: center;
+                padding: 12px 0;
+              "
+            >
+              Loading posts...
+            </p>
           </div>
         </section>
 
         <div class="sidebar-stack">
           <div class="online-status panel">
-            <span class="on-text">ON</span><span class="line-text">LINE</span>
+            <span class="on-text">ON</span
+            ><span class="line-text">LINE</span>
           </div>
           <div class="placeholder-panel panel">
             <p>NO IDEA</p>
@@ -133,6 +143,24 @@
             autocomplete="current-password"
           />
         </div>
+        <div class="form-group">
+          <label for="login-token">GITHUB TOKEN:</label>
+          <input
+            type="password"
+            id="login-token"
+            autocomplete="off"
+            placeholder="ghp_xxxxxxxxxxxx"
+          />
+          <span
+            style="
+              font-size: 0.55rem;
+              color: var(--text-muted);
+              margin-top: 4px;
+              display: block;
+            "
+            >Fine-grained PAT with Contents read/write</span
+          >
+        </div>
         <p id="login-error" class="error-text hidden">WRONG CREDENTIALS!</p>
         <div class="modal-actions">
           <button id="login-submit-btn" class="btn-primary">LOGIN</button>
@@ -145,54 +173,113 @@
     <div id="new-post-modal" class="modal-overlay hidden">
       <div class="modal modal-wide">
         <h2>NEW BLOG POST</h2>
-        
+
         <div class="form-group">
           <label>TITLE & COLOR:</label>
-          <div style="display: flex; gap: 10px; align-items: center;">
-            <input type="text" id="post-title" placeholder="Enter post title..." style="flex: 1;" />
-            <input type="color" id="post-title-color" value="#ff00de" title="Title Color" style="width: 40px; height: 35px; border: none; cursor: pointer;" />
+          <div style="display: flex; gap: 10px; align-items: center">
+            <input
+              type="text"
+              id="post-title"
+              placeholder="Enter post title..."
+              style="flex: 1"
+            />
+            <input
+              type="color"
+              id="post-title-color"
+              value="#ff00de"
+              title="Title Color"
+              style="
+                width: 40px;
+                height: 35px;
+                border: none;
+                cursor: pointer;
+              "
+            />
           </div>
         </div>
 
         <div class="form-group">
           <label>DEFAULT TEXT COLOR:</label>
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <input type="color" id="post-color" value="#e0e0e0" style="width: 40px; height: 30px; border: none; cursor: pointer;" />
-            <span style="font-size: 0.7rem; color: var(--text-muted);">Base text color</span>
+          <div style="display: flex; align-items: center; gap: 10px">
+            <input
+              type="color"
+              id="post-color"
+              value="#e0e0e0"
+              style="
+                width: 40px;
+                height: 30px;
+                border: none;
+                cursor: pointer;
+              "
+            />
+            <span style="font-size: 0.7rem; color: var(--text-muted)"
+              >Base text color</span
+            >
           </div>
         </div>
 
         <div class="form-group">
           <label for="post-content">CONTENT:</label>
-          
+
           <!-- Editor Toolbar -->
-          <div class="editor-toolbar" style="margin-bottom: 5px; display: flex; gap: 5px; align-items: center;">
+          <div
+            class="editor-toolbar"
+            style="
+              margin-bottom: 5px;
+              display: flex;
+              gap: 5px;
+              align-items: center;
+            "
+          >
             <button id="btn-bold" class="btn-tool" title="Bold">B</button>
             <button id="btn-italic" class="btn-tool" title="Italic">I</button>
             <button id="btn-header" class="btn-tool" title="Header">H</button>
             <button id="btn-undo" class="btn-tool" title="Undo">↶</button>
             <button id="btn-redo" class="btn-tool" title="Redo">↷</button>
-            <div style="width: 1px; height: 20px; background: var(--border-color); margin: 0 5px;"></div>
-            <input type="color" id="editor-color" value="#00ff00" style="width: 30px; height: 30px; border: none; padding: 0; cursor: pointer;" title="Select Color" />
-            <button id="btn-color-apply" class="btn-tool" title="Apply Color to Selection">COLOR</button>
+            <div
+              style="
+                width: 1px;
+                height: 20px;
+                background: var(--border-color);
+                margin: 0 5px;
+              "
+            ></div>
+            <input
+              type="color"
+              id="editor-color"
+              value="#00ff00"
+              style="
+                width: 30px;
+                height: 30px;
+                border: none;
+                padding: 0;
+                cursor: pointer;
+              "
+              title="Select Color"
+            />
+            <button
+              id="btn-color-apply"
+              class="btn-tool"
+              title="Apply Color to Selection"
+            >
+              COLOR
+            </button>
           </div>
 
           <textarea
             id="post-content"
             rows="8"
             placeholder="Write your post..."
-            style="font-family: monospace; font-size: 0.85rem;"
+            style="font-family: monospace; font-size: 0.85rem"
           ></textarea>
         </div>
 
         <div class="form-group">
           <label for="post-image">IMAGES (OPTIONAL):</label>
           <input type="file" id="post-image" accept="image/*" multiple />
-          <div class="image-preview-container" id="image-preview">
-            <img id="image-preview-img" alt="Preview" />
-          </div>
+          <div class="image-preview-container" id="image-preview"></div>
         </div>
-        
+
         <div class="modal-actions">
           <button id="post-submit-btn" class="btn-primary">POST</button>
           <button id="post-cancel-btn" class="btn-secondary">CANCEL</button>
@@ -211,7 +298,11 @@
     </div>
 
     <!-- ========== LIGHTBOX MODAL ========== -->
-    <div id="lightbox-modal" class="modal-overlay hidden" style="z-index: 2000; cursor: pointer;">
+    <div
+      id="lightbox-modal"
+      class="modal-overlay hidden"
+      style="z-index: 2000; cursor: pointer"
+    >
       <span class="lightbox-close-btn">&times;</span>
       <img id="lightbox-img" alt="Zoomed image" />
     </div>

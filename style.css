@@ -1,6 +1,6 @@
 /* ============================================
    testPage — Retro Pixel-Art Stylesheet
-   ============================================ */
+============================================ */
 
 /* === RESET === */
 *,
@@ -120,7 +120,7 @@ body::after {
 
 /* ============================
    HEADER ROW
-   ============================ */
+============================ */
 .header-row {
   display: flex;
   gap: 10px;
@@ -243,7 +243,7 @@ body::after {
 
 /* ============================
    ABOUT ME + LINKS ROW
-   ============================ */
+============================ */
 .content-row {
   display: flex;
   gap: 10px;
@@ -263,7 +263,12 @@ body::after {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #f0e6ff, #c4b0e8 40%, #9480c0);
+  background: radial-gradient(
+    circle at 35% 35%,
+    #f0e6ff,
+    #c4b0e8 40%,
+    #9480c0
+  );
   position: absolute;
   top: 10px;
   left: 12px;
@@ -359,7 +364,7 @@ body::after {
 
 /* ============================
    MUSIC PLAYER ROW
-   ============================ */
+============================ */
 .player-row {
   display: flex;
   gap: 10px;
@@ -459,7 +464,7 @@ body::after {
 
 /* ============================
    TEXT SECTION
-   ============================ */
+============================ */
 .text-section {
   text-align: center;
   padding: 18px;
@@ -474,7 +479,7 @@ body::after {
 
 /* ============================
    BLOG + SIDEBAR
-   ============================ */
+============================ */
 .bottom-row {
   display: flex;
   gap: 10px;
@@ -672,7 +677,7 @@ body::after {
 
 /* ============================
    FLOATING ADMIN BUTTON
-   ============================ */
+============================ */
 .floating-btn {
   position: fixed;
   bottom: 22px;
@@ -702,7 +707,7 @@ body::after {
 
 /* ============================
    ADMIN ACTION BUTTON
-   ============================ */
+============================ */
 .admin-action-btn {
   font-family: var(--font-pixel);
   font-size: 0.65rem;
@@ -723,8 +728,6 @@ body::after {
   transform: scale(1.04);
 }
 
-
-
 #post-title {
   width: 100%;
   background: var(--bg-dark);
@@ -736,7 +739,9 @@ body::after {
   margin-bottom: 5px;
 }
 
-#post-color, #post-title-color, #editor-color {
+#post-color,
+#post-title-color,
+#editor-color {
   background: none;
   border: 1px solid var(--border-color);
   padding: 2px;
@@ -759,8 +764,8 @@ body::after {
 }
 
 /* Markdown Styles in Post */
-.post-detail-content h1, 
-.post-detail-content h2, 
+.post-detail-content h1,
+.post-detail-content h2,
 .post-detail-content h3,
 .post-detail-content h4,
 .post-detail-content h5,
@@ -778,7 +783,7 @@ body::after {
 
 /* ============================
    MODALS
-   ============================ */
+============================ */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -860,7 +865,9 @@ body::after {
   border: 1px solid var(--border-color);
   background: #000;
   cursor: zoom-in;
-  transition: transform 0.2s ease, border-color 0.2s;
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s;
 }
 
 .post-detail-image:hover {
@@ -1005,7 +1012,6 @@ body::after {
   display: none;
   padding: 4px;
   gap: 4px;
-  display: flex;
   flex-wrap: wrap;
 }
 
@@ -1089,14 +1095,14 @@ body::after {
 
 /* ============================
    UTILITIES
-   ============================ */
+============================ */
 .hidden {
   display: none !important;
 }
 
 /* ============================
    SCROLLBAR
-   ============================ */
+============================ */
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -1115,8 +1121,55 @@ body::after {
 }
 
 /* ============================
+   SAVE STATUS INDICATOR
+============================ */
+.save-status {
+  position: fixed;
+  bottom: 80px;
+  right: 22px;
+  z-index: 100;
+  font-family: var(--font-pixel);
+  font-size: 0.55rem;
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  animation: status-fade-in 0.3s ease-out;
+  pointer-events: none;
+}
+
+.save-status.success {
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+  box-shadow: 0 0 10px rgba(57, 255, 20, 0.3);
+}
+
+.save-status.error {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+  box-shadow: 0 0 10px rgba(255, 23, 68, 0.3);
+}
+
+.save-status.saving {
+  border-color: var(--neon-pink);
+  color: var(--neon-pink);
+  box-shadow: 0 0 10px rgba(255, 45, 149, 0.3);
+}
+
+@keyframes status-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================
    RESPONSIVE
-   ============================ */
+============================ */
 @media (max-width: 580px) {
   .page-container {
     margin: 8px;

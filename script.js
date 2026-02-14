@@ -1,14 +1,24 @@
 /* ============================================
    testPage — Client-Side Logic
-   Blog CRUD · Admin Auth · Star Animation
-   ============================================ */
+   Blog CRUD via GitHub API · Admin Auth · Stars
+============================================ */
 
 // ============ CONFIGURATION ============
+// !!! CHANGE THESE TO YOUR REPO DETAILS !!!
+const GITHUB_OWNER = "Rollin-Robyn";
+const GITHUB_REPO = "Website-Blog";
+const GITHUB_BRANCH = "main";
+const POSTS_FILE_PATH = "posts.json";
+
 const ADMIN_USERNAME_HASH =
   "575aad173fe88daee328513f7863c40938ac02bfda2c3e384d3c5c5a83d0e3cf";
 const ADMIN_PASSWORD_HASH =
   "db7009bbc0ea420246146b8336df6f33f7e67d7f1389c1f58496d012a2f29e39";
-const BLOG_STORAGE_KEY = "testpage_blog_posts";
+
+// In-memory state
+let cachedPosts = [];
+let fileSha = null;
+let githubToken = null;
 
 // ============ SHA-256 HASHING ============
 async function sha256(text) {
@@ -17,6 +27,230 @@ async function sha256(text) {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ============ STATUS INDICATOR ============
+function showStatus(message, type = "saving") {
+  // Remove existing
+  const existing = document.querySelector(".save-status");
+  if (existing) existing.remove();
+
+  const el = document.createElement("div");
+  el.className = `save-status ${type}`;
+  el.textContent = message;
+  document.body.appendChild(el);
+
+  if (type === "success" || type === "error") {
+    setTimeout(() => {
+      if (el.parentNode) el.remove();
+    }, 3000);
+  }
+
+  return el;
+}
+
+// ============ GITHUB API ============
+
+/**
+ * Fetch posts.json from GitHub (public read — no token needed)
+ */
+async function fetchPostsFromGitHub() {
+  try {
+    // Use raw content URL for public repos (no auth needed, no rate limit issues)
+    const url = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${POSTS_FILE_PATH}?t=${Date.now()}`;
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.log("posts.json not found, starting fresh");
+        cachedPosts = [];
+        return [];
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const posts = await response.json();
+    cachedPosts = posts;
+    return posts;
+  } catch (err) {
+    console.error("Failed to fetch posts:", err);
+    // Return cached if available
+    return cachedPosts;
+  }
+}
+
+/**
+ * Get the current SHA of posts.json (needed for updates via API)
+ * This requires the API endpoint, not raw content
+ */
+async function getFileSha() {
+  try {
+    const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}?ref=${GITHUB_BRANCH}`;
+
+    const headers = {
+      Accept: "application/vnd.github.v3+json",
+    };
+
+    // Use token if available (helps with rate limits)
+    if (githubToken) {
+      headers["Authorization"] = `Bearer ${githubToken}`;
+    }
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null; // File doesn't exist yet
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    fileSha = data.sha;
+    return data.sha;
+  } catch (err) {
+    console.error("Failed to get file SHA:", err);
+    return null;
+  }
+}
+
+/**
+ * Save posts.json to GitHub (requires token)
+ */
+async function savePostsToGitHub(posts) {
+  if (!githubToken) {
+    alert("Not authenticated! Please log in first.");
+    return false;
+  }
+
+  const statusEl = showStatus("SAVING TO GITHUB...", "saving");
+
+  try {
+    // Get current SHA first
+    const currentSha = await getFileSha();
+
+    const content = JSON.stringify(posts, null, 2);
+    const encodedContent = btoa(unescape(encodeURIComponent(content)));
+
+    const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POSTS_FILE_PATH}`;
+
+    const body = {
+      message: `Update blog posts - ${new Date().toISOString()}`,
+      content: encodedContent,
+      branch: GITHUB_BRANCH,
+    };
+
+    // Include SHA if file already exists (required for updates)
+    if (currentSha) {
+      body.sha = currentSha;
+    }
+
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error("GitHub API error:", errorData);
+
+      if (response.status === 409) {
+        // Conflict — SHA mismatch, refetch and retry
+        statusEl.remove();
+        showStatus("CONFLICT — RETRYING...", "error");
+        await getFileSha();
+        return await savePostsToGitHub(posts);
+      }
+
+      throw new Error(
+        `GitHub API error: ${response.status} ${errorData.message || ""}`
+      );
+    }
+
+    const result = await response.json();
+    fileSha = result.content.sha;
+    cachedPosts = posts;
+
+    statusEl.remove();
+    showStatus("SAVED!", "success");
+    return true;
+  } catch (err) {
+    console.error("Failed to save posts:", err);
+    statusEl.remove();
+    showStatus("SAVE FAILED!", "error");
+    alert(`Failed to save: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Upload an image to the repo and return its raw URL
+ * Images stored in /blog-images/ folder
+ */
+async function uploadImageToGitHub(base64Data, filename) {
+  if (!githubToken) return null;
+
+  try {
+    // Strip the data URL prefix to get pure base64
+    const pureBase64 = base64Data.replace(/^data:image\/\w+;base64,/, "");
+
+    const path = `blog-images/${filename}`;
+    const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}`;
+
+    // Check if file already exists
+    let existingSha = null;
+    try {
+      const checkResponse = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+      });
+      if (checkResponse.ok) {
+        const checkData = await checkResponse.json();
+        existingSha = checkData.sha;
+      }
+    } catch {
+      // File doesn't exist, that's fine
+    }
+
+    const body = {
+      message: `Add blog image: ${filename}`,
+      content: pureBase64,
+      branch: GITHUB_BRANCH,
+    };
+
+    if (existingSha) {
+      body.sha = existingSha;
+    }
+
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Image upload failed: ${response.status}`);
+    }
+
+    // Return the raw GitHub URL for the image
+    const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${path}`;
+    return rawUrl;
+  } catch (err) {
+    console.error("Failed to upload image:", err);
+    return null;
+  }
 }
 
 // ============ STAR BACKGROUND ============
@@ -46,8 +280,8 @@ function initStars() {
     });
   }
 
-  // Occasional shooting star
   let shootingStar = null;
+
   function maybeSpawnShootingStar() {
     if (Math.random() < 0.003 && !shootingStar) {
       shootingStar = {
@@ -66,21 +300,18 @@ function initStars() {
   function animate() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw regular stars
     for (const star of stars) {
       star.alpha += star.speed;
       if (star.alpha >= star.maxAlpha || star.alpha <= 0.05) {
         star.speed *= -1;
         star.alpha = Math.max(0.05, Math.min(star.alpha, star.maxAlpha));
       }
-
       ctx.beginPath();
       ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(220, 210, 255, ${star.alpha})`;
       ctx.fill();
     }
 
-    // Draw shooting star
     maybeSpawnShootingStar();
     if (shootingStar) {
       const s = shootingStar;
@@ -103,15 +334,12 @@ function initStars() {
       ctx.lineTo(tailX, tailY);
       ctx.stroke();
 
-      // Glow at head
       ctx.beginPath();
       ctx.arc(s.x, s.y, 2, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(255, 255, 255, ${s.alpha})`;
       ctx.fill();
 
-      if (s.life >= s.maxLife) {
-        shootingStar = null;
-      }
+      if (s.life >= s.maxLife) shootingStar = null;
     }
 
     requestAnimationFrame(animate);
@@ -120,53 +348,40 @@ function initStars() {
   animate();
 }
 
-// ============ BLOG MANAGEMENT ============
-function getDefaultPosts() {
-  return [
-    {
-      id: "default-1",
-      date: "14/02/26",
-      content:
-        "Welcome to my page! This is my first blog post. Still working on things but it's coming together nicely!",
-    },
-    {
-      id: "default-2",
-      date: "14/02/26",
-      content:
-        "Just finished setting up the layout. Pretty happy with how the retro aesthetic turned out. More updates coming soon...",
-    },
-  ];
-}
-
-function loadPosts() {
-  const stored = localStorage.getItem(BLOG_STORAGE_KEY);
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return getDefaultPosts();
-    }
-  }
-  const defaults = getDefaultPosts();
-  savePosts(defaults);
-  return defaults;
-}
-
-function savePosts(posts) {
-  localStorage.setItem(BLOG_STORAGE_KEY, JSON.stringify(posts));
-}
-
+// ============ BLOG RENDERING ============
 function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
 }
 
+function parseMarkdown(text) {
+  let md = escapeHtml(text);
+
+  md = md.replace(/^###### (.*)$/gm, "<h6>$1</h6>");
+  md = md.replace(/^##### (.*)$/gm, "<h5>$1</h5>");
+  md = md.replace(/^#### (.*)$/gm, "<h4>$1</h4>");
+  md = md.replace(/^### (.*)$/gm, "<h3>$1</h3>");
+  md = md.replace(/^## (.*)$/gm, "<h2>$1</h2>");
+  md = md.replace(/^# (.*)$/gm, "<h1>$1</h1>");
+
+  md = md.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  md = md.replace(/\*(.+?)\*/g, "<em>$1</em>");
+
+  md = md.replace(
+    /\{color:(.+?)\}(.+?)\{\/color\}/g,
+    '<span style="color:$1; text-shadow: 0 0 5px $1" class="preview-color-span">$2</span>'
+  );
+
+  md = md.replace(/\n/g, "<br>");
+  return md;
+}
+
 function renderPosts() {
   const container = document.getElementById("blog-posts");
   if (!container) return;
 
-  const posts = loadPosts();
+  const posts = cachedPosts;
   const isAdmin = sessionStorage.getItem("testpage_admin") === "true";
 
   container.innerHTML = "";
@@ -201,24 +416,22 @@ function renderPosts() {
       ? `style="color:${post.titleColor};text-shadow:0 0 5px ${post.titleColor}"`
       : "";
 
-    // Preview: parse markdown but limit lines via CSS
-    const previewContent = parseMarkdown(post.content);
+    const previewContent = parseMarkdown(post.content || "");
 
     postEl.innerHTML = `
-            <div class="blog-post-date">${escapeHtml(post.date)}</div>
-            <div class="blog-post-body">
-                <div class="blog-post-text">
-                  <strong ${titleStyle}>${title}</strong><br>
-                  <span class="preview-text">${previewContent}</span>
-                </div>
-                <div class="blog-post-image">
-                    ${imageContent}
-                </div>
-            </div>
-            ${deleteBtn}
-        `;
+      <div class="blog-post-date">${escapeHtml(post.date)}</div>
+      <div class="blog-post-body">
+        <div class="blog-post-text">
+          <strong ${titleStyle}>${title}</strong><br>
+          <span class="preview-text">${previewContent}</span>
+        </div>
+        <div class="blog-post-image">
+          ${imageContent}
+        </div>
+      </div>
+      ${deleteBtn}
+    `;
 
-    // Click to open detail (but not if clicking delete)
     postEl.addEventListener("click", (e) => {
       if (e.target.closest(".delete-post-btn")) return;
       openPostDetail(post);
@@ -227,21 +440,25 @@ function renderPosts() {
     container.appendChild(postEl);
   });
 
-  // Attach delete handlers
   if (isAdmin) {
     container.querySelectorAll(".delete-post-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const id = btn.dataset.id;
         if (confirm("Delete this post?")) {
-          deletePost(id);
+          await deletePost(id);
         }
       });
     });
   }
 }
 
-function addPost(title, content, color, imagesBase64 = [], titleColor = null) {
-  const posts = loadPosts();
+async function addPost(
+  title,
+  content,
+  color,
+  imageUrls = [],
+  titleColor = null
+) {
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
   const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -254,30 +471,33 @@ function addPost(title, content, color, imagesBase64 = [], titleColor = null) {
     titleColor: titleColor,
     content: content,
     color: color || "#ffffff",
-    images: imagesBase64,
+    images: imageUrls,
   };
 
-  posts.unshift(newPost);
-  try {
-    savePosts(posts);
+  // Refetch to avoid conflicts
+  await fetchPostsFromGitHub();
+  cachedPosts.unshift(newPost);
+
+  const saved = await savePostsToGitHub(cachedPosts);
+  if (saved) {
     renderPosts();
     return true;
-  } catch (e) {
-    if (e.name === "QuotaExceededError" || e.name === "NS_ERROR_DOM_QUOTA_REACHED") {
-      alert("Storage full! Image might be too big.");
-    } else {
-      console.error("Failed to save post:", e);
-      alert("Error saving post!");
-    }
+  } else {
+    // Remove the post we just added since save failed
+    cachedPosts.shift();
     return false;
   }
 }
 
-function deletePost(id) {
-  let posts = loadPosts();
-  posts = posts.filter((p) => p.id !== id);
-  savePosts(posts);
-  renderPosts();
+async function deletePost(id) {
+  // Refetch to avoid conflicts
+  await fetchPostsFromGitHub();
+  cachedPosts = cachedPosts.filter((p) => p.id !== id);
+
+  const saved = await savePostsToGitHub(cachedPosts);
+  if (saved) {
+    renderPosts();
+  }
 }
 
 function openPostDetail(post) {
@@ -303,20 +523,18 @@ function openPostDetail(post) {
   detailContent.innerHTML = `
     <h2 ${titleStyle}>${escapeHtml(post.title || "BLOG POST")}</h2>
     <div class="post-detail-date">${escapeHtml(post.date)}</div>
-    <div class="post-detail-content" style="color: ${post.color || "inherit"}">${parseMarkdown(post.content)}</div>
+    <div class="post-detail-content" style="color: ${post.color || "inherit"}">${parseMarkdown(post.content || "")}</div>
     ${imagesHtml}
   `;
 
-  // Add click listeners to images for lightbox
-  const detailImages = detailContent.querySelectorAll(".post-detail-image");
-  detailImages.forEach((img) => {
+  detailContent.querySelectorAll(".post-detail-image").forEach((img) => {
     img.addEventListener("click", () => openLightbox(img.src));
   });
 
   detailModal.classList.remove("hidden");
 }
 
-/* Lightbox Logic */
+// ============ LIGHTBOX ============
 const lightboxModal = document.getElementById("lightbox-modal");
 const lightboxImg = document.getElementById("lightbox-img");
 const lightboxClose = document.querySelector(".lightbox-close-btn");
@@ -343,12 +561,11 @@ if (lightboxClose) {
 
 if (lightboxModal) {
   lightboxModal.addEventListener("click", (e) => {
-    if (e.target !== lightboxImg) {
-      closeLightbox();
-    }
+    if (e.target !== lightboxImg) closeLightbox();
   });
 }
 
+// ============ IMAGE COMPRESSION ============
 function compressImage(file, maxWidth = 800, quality = 0.7) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -379,54 +596,24 @@ function compressImage(file, maxWidth = 800, quality = 0.7) {
   });
 }
 
-function parseMarkdown(text) {
-  let md = escapeHtml(text);
-  
-  // Headers (Order matters: most hashes first)
-  md = md.replace(/^###### (.*$)/gim, "<h6>$1</h6>");
-  md = md.replace(/^##### (.*$)/gim, "<h5>$1</h5>");
-  md = md.replace(/^#### (.*$)/gim, "<h4>$1</h4>");
-  md = md.replace(/^### (.*$)/gim, "<h3>$1</h3>");
-  md = md.replace(/^## (.*$)/gim, "<h2>$1</h2>");
-  md = md.replace(/^# (.*$)/gim, "<h1>$1</h1>");
-
-  // Bold, Italic
-  md = md.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-  md = md.replace(/\*(.*?)\*/g, "<em>$1</em>");
-  
-  // Color: {color:#hex}text{/color}
-  // Add text-shadow to match color for glow effect
-  md = md.replace(
-    /\{color:(.*?)\}(.*?)\{\/color\}/g,
-    '<span style="color:$1; text-shadow: 0 0 5px $1" class="preview-color-span">$2</span>'
-  );
-
-  // Newlines
-  md = md.replace(/\n/g, "<br>");
-  return md;
-}
-
-// Editor Toolbar Logic
+// ============ EDITOR TOOLBAR ============
 let historyStack = [];
 let historyIndex = -1;
 
 function saveHistory() {
   const textarea = document.getElementById("post-content");
   if (!textarea) return;
-  
+
   const val = textarea.value;
-  // If no change, don't save
   if (historyIndex >= 0 && historyStack[historyIndex] === val) return;
 
-  // Remove redo history if we typed new things
   if (historyIndex < historyStack.length - 1) {
     historyStack = historyStack.slice(0, historyIndex + 1);
   }
-  
+
   historyStack.push(val);
   historyIndex++;
-  
-  // Cap history size
+
   if (historyStack.length > 50) {
     historyStack.shift();
     historyIndex--;
@@ -436,36 +623,31 @@ function saveHistory() {
 function undo() {
   if (historyIndex > 0) {
     historyIndex--;
-    const val = historyStack[historyIndex];
-    document.getElementById("post-content").value = val;
+    document.getElementById("post-content").value = historyStack[historyIndex];
   }
 }
 
 function redo() {
   if (historyIndex < historyStack.length - 1) {
     historyIndex++;
-    const val = historyStack[historyIndex];
-    document.getElementById("post-content").value = val;
+    document.getElementById("post-content").value = historyStack[historyIndex];
   }
 }
 
 function insertMarkdown(startTag, endTag) {
   const textarea = document.getElementById("post-content");
   if (!textarea) return;
-  
-  // Save state before modification
+
   saveHistory();
 
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
   const text = textarea.value;
   const selection = text.substring(start, end);
-
   const replacement = startTag + selection + endTag;
   textarea.setRangeText(replacement, start, end, "select");
   textarea.focus();
-  
-  // Save state after modification
+
   saveHistory();
 }
 
@@ -475,34 +657,34 @@ function insertColor() {
   insertMarkdown(`{color:${color}}`, `{/color}`);
 }
 
-// Attach listener for toolbar
+// Toolbar button listeners
 document.addEventListener("DOMContentLoaded", () => {
-    const btnBold = document.getElementById("btn-bold");
-    if (btnBold) btnBold.addEventListener("click", () => insertMarkdown("**", "**"));
+  const btnBold = document.getElementById("btn-bold");
+  if (btnBold)
+    btnBold.addEventListener("click", () => insertMarkdown("**", "**"));
 
-    const btnItalic = document.getElementById("btn-italic");
-    if (btnItalic) btnItalic.addEventListener("click", () => insertMarkdown("*", "*"));
+  const btnItalic = document.getElementById("btn-italic");
+  if (btnItalic)
+    btnItalic.addEventListener("click", () => insertMarkdown("*", "*"));
 
-    const btnHeader = document.getElementById("btn-header");
-    if (btnHeader) btnHeader.addEventListener("click", () => insertMarkdown("### ", "")); 
+  const btnHeader = document.getElementById("btn-header");
+  if (btnHeader)
+    btnHeader.addEventListener("click", () => insertMarkdown("### ", ""));
 
-    const btnColorApply = document.getElementById("btn-color-apply");
-    if (btnColorApply) btnColorApply.addEventListener("click", insertColor);
+  const btnColorApply = document.getElementById("btn-color-apply");
+  if (btnColorApply) btnColorApply.addEventListener("click", insertColor);
 
-    const btnUndo = document.getElementById("btn-undo");
-    if (btnUndo) btnUndo.addEventListener("click", undo);
-    
-    const btnRedo = document.getElementById("btn-redo");
-    if (btnRedo) btnRedo.addEventListener("click", redo);
+  const btnUndo = document.getElementById("btn-undo");
+  if (btnUndo) btnUndo.addEventListener("click", undo);
 
-    const textarea = document.getElementById("post-content");
-    if (textarea) {
-        // Save initial state
-        saveHistory();
-        textarea.addEventListener("input", () => {
-             saveHistory();
-        });
-    }
+  const btnRedo = document.getElementById("btn-redo");
+  if (btnRedo) btnRedo.addEventListener("click", redo);
+
+  const textarea = document.getElementById("post-content");
+  if (textarea) {
+    saveHistory();
+    textarea.addEventListener("input", () => saveHistory());
+  }
 });
 
 // ============ AUTH ============
@@ -510,7 +692,8 @@ async function attemptLogin(username, password) {
   const usernameHash = await sha256(username);
   const passwordHash = await sha256(password);
   return (
-    usernameHash === ADMIN_USERNAME_HASH && passwordHash === ADMIN_PASSWORD_HASH
+    usernameHash === ADMIN_USERNAME_HASH &&
+    passwordHash === ADMIN_PASSWORD_HASH
   );
 }
 
@@ -523,6 +706,7 @@ function setAdminMode(enabled) {
     sessionStorage.setItem("testpage_admin", "true");
   } else {
     sessionStorage.removeItem("testpage_admin");
+    githubToken = null;
   }
 
   if (loginBtn) loginBtn.classList.toggle("hidden", enabled);
@@ -532,14 +716,26 @@ function setAdminMode(enabled) {
   renderPosts();
 }
 
-// ============ INITIALIZATION ============
-document.addEventListener("DOMContentLoaded", () => {
+// ============ MAIN INITIALIZATION ============
+document.addEventListener("DOMContentLoaded", async () => {
   initStars();
+
+  // Load posts from GitHub on page load
+  const statusEl = showStatus("LOADING POSTS...", "saving");
+  try {
+    await fetchPostsFromGitHub();
+    statusEl.remove();
+  } catch {
+    statusEl.remove();
+    showStatus("FAILED TO LOAD POSTS", "error");
+  }
   renderPosts();
 
-  // Restore admin session if active
+  // Restore admin session
   if (sessionStorage.getItem("testpage_admin") === "true") {
-    setAdminMode(true);
+    // Token is lost on refresh (sessionStorage doesn't store it)
+    // Admin will need to re-login to make changes
+    setAdminMode(false);
   }
 
   // --- Login Modal ---
@@ -551,12 +747,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const loginError = document.getElementById("login-error");
   const usernameInput = document.getElementById("login-username");
   const passwordInput = document.getElementById("login-password");
+  const tokenInput = document.getElementById("login-token");
 
   if (loginBtn) {
     loginBtn.addEventListener("click", () => {
       loginModal.classList.remove("hidden");
       usernameInput.value = "";
       passwordInput.value = "";
+      tokenInput.value = "";
       loginError.classList.add("hidden");
       setTimeout(() => usernameInput.focus(), 100);
     });
@@ -572,8 +770,9 @@ document.addEventListener("DOMContentLoaded", () => {
     loginSubmit.addEventListener("click", async () => {
       const username = usernameInput.value.trim();
       const password = passwordInput.value;
+      const token = tokenInput.value.trim();
 
-      if (!username || !password) {
+      if (!username || !password || !token) {
         loginError.textContent = "FILL IN ALL FIELDS!";
         loginError.classList.remove("hidden");
         return;
@@ -582,32 +781,81 @@ document.addEventListener("DOMContentLoaded", () => {
       loginSubmit.textContent = "CHECKING...";
       loginSubmit.disabled = true;
 
-      const success = await attemptLogin(username, password);
+      const credentialsOk = await attemptLogin(username, password);
 
-      if (success) {
-        loginModal.classList.add("hidden");
-        setAdminMode(true);
-      } else {
+      if (!credentialsOk) {
         loginError.textContent = "WRONG CREDENTIALS!";
         loginError.classList.remove("hidden");
+        loginSubmit.textContent = "LOGIN";
+        loginSubmit.disabled = false;
+        return;
       }
+
+      // Verify the GitHub token works
+      try {
+        const testResponse = await fetch(
+          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/vnd.github.v3+json",
+            },
+          }
+        );
+
+        if (!testResponse.ok) {
+          loginError.textContent = "INVALID GITHUB TOKEN!";
+          loginError.classList.remove("hidden");
+          loginSubmit.textContent = "LOGIN";
+          loginSubmit.disabled = false;
+          return;
+        }
+
+        // Check if token has push permission
+        const repoData = await testResponse.json();
+        if (!repoData.permissions || !repoData.permissions.push) {
+          loginError.textContent = "TOKEN LACKS WRITE ACCESS!";
+          loginError.classList.remove("hidden");
+          loginSubmit.textContent = "LOGIN";
+          loginSubmit.disabled = false;
+          return;
+        }
+      } catch (err) {
+        loginError.textContent = "TOKEN VERIFICATION FAILED!";
+        loginError.classList.remove("hidden");
+        loginSubmit.textContent = "LOGIN";
+        loginSubmit.disabled = false;
+        return;
+      }
+
+      // All good — store token in memory and enable admin
+      githubToken = token;
+      loginModal.classList.add("hidden");
+      setAdminMode(true);
+      showStatus("LOGGED IN!", "success");
 
       loginSubmit.textContent = "LOGIN";
       loginSubmit.disabled = false;
     });
   }
 
-  // Enter key in password field triggers login
-  if (passwordInput) {
-    passwordInput.addEventListener("keydown", (e) => {
+  // Enter in token field triggers login
+  if (tokenInput) {
+    tokenInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") loginSubmit.click();
     });
   }
 
-  // Logout
+  if (passwordInput) {
+    passwordInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") tokenInput.focus();
+    });
+  }
+
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () => {
       setAdminMode(false);
+      showStatus("LOGGED OUT", "success");
     });
   }
 
@@ -622,21 +870,29 @@ document.addEventListener("DOMContentLoaded", () => {
     newPostBtn.addEventListener("click", () => {
       newPostModal.classList.remove("hidden");
       postContentInput.value = "";
+
       const titleInput = document.getElementById("post-title");
       if (titleInput) titleInput.value = "";
+
       const titleColorInput = document.getElementById("post-title-color");
       if (titleColorInput) titleColorInput.value = "#ff00de";
 
       const colorInput = document.getElementById("post-color");
-      if (colorInput) colorInput.value = "#ffffff"; 
+      if (colorInput) colorInput.value = "#ffffff";
 
       const imgInput = document.getElementById("post-image");
       if (imgInput) imgInput.value = "";
+
       const preview = document.getElementById("image-preview");
       if (preview) {
         preview.innerHTML = "";
         preview.classList.remove("show");
       }
+
+      historyStack = [];
+      historyIndex = -1;
+      saveHistory();
+
       setTimeout(() => postContentInput.focus(), 100);
     });
   }
@@ -654,53 +910,76 @@ document.addEventListener("DOMContentLoaded", () => {
       const titleColor = document.getElementById("post-title-color").value;
       const color = document.getElementById("post-color").value;
       const imgInput = document.getElementById("post-image");
-      const hasImages = imgInput && imgInput.files && imgInput.files.length > 0;
+      const hasImages =
+        imgInput && imgInput.files && imgInput.files.length > 0;
 
-      if (content || hasImages) {
-        postSubmit.textContent = "COMPRESSING...";
-        postSubmit.disabled = true;
-
-        const imagesBase64 = [];
-
-        if (hasImages) {
-          for (let i = 0; i < imgInput.files.length; i++) {
-            try {
-              const b64 = await compressImage(imgInput.files[i]);
-              imagesBase64.push(b64);
-            } catch (e) {
-              console.error("Failed to process image:", e);
-              alert("Failed to process image!");
-            }
-          }
-        }
-
-        if (addPost(title, content, color, imagesBase64, titleColor)) {
-          newPostModal.classList.add("hidden");
-          postContentInput.value = "";
-          if (document.getElementById("post-title")) document.getElementById("post-title").value = "";
-          if (document.getElementById("post-title-color")) document.getElementById("post-title-color").value = "#ff00de";
-          imgInput.value = "";
-          const preview = document.getElementById("image-preview");
-          if (preview) {
-             preview.innerHTML = "";
-             preview.classList.remove("show");
-          }
-        }
-        
-        postSubmit.textContent = "POST";
-        postSubmit.disabled = false;
-      } else {
+      if (!content && !hasImages) {
         alert("Enter text or select an image!");
+        return;
       }
+
+      postSubmit.textContent = "UPLOADING...";
+      postSubmit.disabled = true;
+
+      const imageUrls = [];
+
+      if (hasImages) {
+        for (let i = 0; i < imgInput.files.length; i++) {
+          try {
+            // Compress the image first
+            const compressed = await compressImage(imgInput.files[i]);
+
+            // Generate unique filename
+            const timestamp = Date.now();
+            const filename = `img-${timestamp}-${i}.jpg`;
+
+            // Upload to GitHub repo
+            const url = await uploadImageToGitHub(compressed, filename);
+            if (url) {
+              imageUrls.push(url);
+            } else {
+              console.error("Failed to upload image", i);
+            }
+          } catch (e) {
+            console.error("Failed to process image:", e);
+          }
+        }
+      }
+
+      const success = await addPost(
+        title,
+        content,
+        color,
+        imageUrls,
+        titleColor
+      );
+
+      if (success) {
+        newPostModal.classList.add("hidden");
+        postContentInput.value = "";
+
+        const titleEl = document.getElementById("post-title");
+        if (titleEl) titleEl.value = "";
+
+        const titleColorEl = document.getElementById("post-title-color");
+        if (titleColorEl) titleColorEl.value = "#ff00de";
+
+        imgInput.value = "";
+        const preview = document.getElementById("image-preview");
+        if (preview) {
+          preview.innerHTML = "";
+          preview.classList.remove("show");
+        }
+      }
+
+      postSubmit.textContent = "POST";
+      postSubmit.disabled = false;
     });
   }
 
-  // Ctrl+Enter in textarea to submit
   if (postContentInput) {
     postContentInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && e.ctrlKey) {
-        postSubmit.click();
-      }
+      if (e.key === "Enter" && e.ctrlKey) postSubmit.click();
     });
   }
 
@@ -708,9 +987,7 @@ document.addEventListener("DOMContentLoaded", () => {
   [loginModal, newPostModal].forEach((modal) => {
     if (modal) {
       modal.addEventListener("click", (e) => {
-        if (e.target === modal) {
-          modal.classList.add("hidden");
-        }
+        if (e.target === modal) modal.classList.add("hidden");
       });
     }
   });
@@ -727,9 +1004,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (postDetailModal) {
     postDetailModal.addEventListener("click", (e) => {
-      if (e.target === postDetailModal) {
-        postDetailModal.classList.add("hidden");
-      }
+      if (e.target === postDetailModal) postDetailModal.classList.add("hidden");
     });
   }
 
@@ -762,6 +1037,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // Escape key closes modals
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      if (lightboxModal && !lightboxModal.classList.contains("hidden")) {
+        closeLightbox();
+        return;
+      }
       if (loginModal && !loginModal.classList.contains("hidden")) {
         loginModal.classList.add("hidden");
       }
