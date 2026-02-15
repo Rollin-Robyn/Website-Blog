@@ -1,7 +1,6 @@
 /* ============================================
    testPage — Blog Page Logic
-   With post queue system for batch publishing
-   and batch deletion
+   With post queue, batch delete, and reorder
 ============================================ */
 
 const GITHUB_OWNER = "Rollin-Robyn";
@@ -31,6 +30,11 @@ let pendingQueue = [];
 
 // ============ DELETE QUEUE ============
 let deleteQueue = [];
+
+// ============ REORDER STATE ============
+let reorderMode = false;
+let reorderedPosts = null;
+let draggedItem = null;
 
 function log(...args) {
   if (DEBUG) console.log("[BLOG]", ...args);
@@ -155,7 +159,7 @@ async function uploadImageToGitHub(base64Data, filename) {
         headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github.v3+json" },
       });
       if (check.ok) existingSha = (await check.json()).sha;
-    } catch {}
+    } catch { }
 
     const body = { message: `Add image: ${filename}`, content: pureBase64, branch: GITHUB_BRANCH };
     if (existingSha) body.sha = existingSha;
@@ -310,8 +314,11 @@ function getFilteredPosts() {
     });
   }
 
-  if (currentSort === "oldest") posts.sort((a, b) => parseDate(a.date) - parseDate(b.date));
-  else posts.sort((a, b) => parseDate(b.date) - parseDate(a.date));
+  // Don't sort in reorder mode — show raw order
+  if (!reorderMode) {
+    if (currentSort === "oldest") posts.sort((a, b) => parseDate(a.date) - parseDate(b.date));
+    else posts.sort((a, b) => parseDate(b.date) - parseDate(a.date));
+  }
 
   return posts;
 }
@@ -323,10 +330,13 @@ function renderBlogPage() {
   if (!grid) return;
 
   const isAdmin = sessionStorage.getItem("testpage_admin") === "true";
-  const filtered = getFilteredPosts();
+  const postsSource = reorderMode ? (reorderedPosts || cachedPosts) : null;
+  const filtered = reorderMode ? [...(reorderedPosts || cachedPosts)] : getFilteredPosts();
 
   if (countText) {
-    if (currentSearch) {
+    if (reorderMode) {
+      countText.textContent = `REORDER MODE — DRAG TO REARRANGE (${filtered.length} POSTS)`;
+    } else if (currentSearch) {
       countText.textContent = `${filtered.length} RESULT${filtered.length !== 1 ? "S" : ""} FOR "${currentSearch.toUpperCase()}"`;
     } else {
       countText.textContent = `${filtered.length} POST${filtered.length !== 1 ? "S" : ""}`;
@@ -346,25 +356,97 @@ function renderBlogPage() {
     return;
   }
 
-  const toShow = filtered.slice(0, displayedCount);
+  const toShow = reorderMode ? filtered : filtered.slice(0, displayedCount);
 
   toShow.forEach((post, index) => {
     const card = document.createElement("div");
     card.className = "blog-card";
     card.style.animationDelay = `${index * 0.05}s`;
+    card.setAttribute("data-post-id", post.id);
+    card.setAttribute("data-index", index);
 
     const isMarkedForDelete = deleteQueue.some((p) => p.id === post.id);
     if (isMarkedForDelete) {
       card.classList.add("marked-for-delete");
     }
 
+    // Reorder mode
+    if (reorderMode) {
+      card.classList.add("reorder-card");
+      card.setAttribute("draggable", "true");
+
+      card.addEventListener("dragstart", (e) => {
+        draggedItem = card;
+        card.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", index);
+      });
+
+      card.addEventListener("dragend", () => {
+        card.classList.remove("dragging");
+        draggedItem = null;
+        grid.querySelectorAll(".blog-card").forEach((c) => c.classList.remove("drag-over-top", "drag-over-bottom"));
+      });
+
+      card.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (draggedItem === card) return;
+
+        const rect = card.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        card.classList.remove("drag-over-top", "drag-over-bottom");
+        if (e.clientY < midY) card.classList.add("drag-over-top");
+        else card.classList.add("drag-over-bottom");
+      });
+
+      card.addEventListener("dragleave", () => {
+        card.classList.remove("drag-over-top", "drag-over-bottom");
+      });
+
+      card.addEventListener("drop", (e) => {
+        e.preventDefault();
+        card.classList.remove("drag-over-top", "drag-over-bottom");
+        if (!draggedItem || draggedItem === card) return;
+
+        const fromIndex = parseInt(draggedItem.getAttribute("data-index"));
+        let toIndex = parseInt(card.getAttribute("data-index"));
+
+        const rect = card.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (e.clientY > midY) toIndex++;
+        if (fromIndex < toIndex) toIndex--;
+
+        const arr = reorderedPosts || [...cachedPosts];
+        const [moved] = arr.splice(fromIndex, 1);
+        arr.splice(toIndex, 0, moved);
+        reorderedPosts = arr;
+
+        renderBlogPage();
+        showStatus("ORDER CHANGED — SAVE TO APPLY", "saving");
+      });
+    }
+
     let adminBtns = "";
-    if (isAdmin) {
+    if (isAdmin && !reorderMode) {
       if (isMarkedForDelete) {
         adminBtns = `<button class="unmark-delete-btn" data-id="${post.id}" title="Unmark">&#8635;</button>`;
       } else {
         adminBtns = `<button class="delete-post-btn" data-id="${post.id}" title="Mark for deletion">&#10005;</button>`;
       }
+    }
+
+    if (reorderMode) {
+      adminBtns = `
+        <div class="reorder-handle" title="Drag to reorder">
+          <span class="reorder-grip">&#9776;</span>
+          <span class="reorder-position">#${index + 1}</span>
+        </div>
+        <div class="reorder-arrows">
+          <button class="reorder-arrow-btn" data-dir="up" data-index="${index}" title="Move up" ${index === 0 ? "disabled" : ""}>&#9650;</button>
+          <button class="reorder-arrow-btn" data-dir="down" data-index="${index}" title="Move down" ${index === toShow.length - 1 ? "disabled" : ""}>&#9660;</button>
+        </div>
+      `;
     }
 
     const images = post.images || (post.image ? [post.image] : []);
@@ -389,7 +471,7 @@ function renderBlogPage() {
           <div class="blog-card-title" ${titleStyle}>${title}</div>
           <div class="blog-card-preview">${escapeHtml(preview)}</div>
           <div class="blog-card-footer">
-            <span class="blog-card-read-more">READ MORE &#10095;</span>
+            <span class="blog-card-read-more">${reorderMode ? "" : "READ MORE &#10095;"}</span>
             ${imageCountHtml}
           </div>
         </div>
@@ -397,15 +479,39 @@ function renderBlogPage() {
       ${adminBtns}
     `;
 
-    card.addEventListener("click", (e) => {
-      if (e.target.closest(".delete-post-btn") || e.target.closest(".unmark-delete-btn")) return;
-      openPostDetail(post);
-    });
+    if (!reorderMode) {
+      card.addEventListener("click", (e) => {
+        if (e.target.closest(".delete-post-btn") || e.target.closest(".unmark-delete-btn")) return;
+        openPostDetail(post);
+      });
+    }
 
     grid.appendChild(card);
   });
 
-  if (isAdmin) {
+  // Arrow button listeners for reorder mode
+  if (reorderMode) {
+    grid.querySelectorAll(".reorder-arrow-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const dir = btn.dataset.dir;
+        const idx = parseInt(btn.dataset.index);
+        const arr = reorderedPosts || [...cachedPosts];
+
+        if (dir === "up" && idx > 0) {
+          [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+        } else if (dir === "down" && idx < arr.length - 1) {
+          [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+        }
+
+        reorderedPosts = arr;
+        renderBlogPage();
+        showStatus("ORDER CHANGED — SAVE TO APPLY", "saving");
+      });
+    });
+  }
+
+  if (isAdmin && !reorderMode) {
     grid.querySelectorAll(".delete-post-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         addToDeleteQueue(btn.dataset.id);
@@ -419,7 +525,7 @@ function renderBlogPage() {
     });
   }
 
-  if (displayedCount < filtered.length) {
+  if (!reorderMode && displayedCount < filtered.length) {
     const remaining = filtered.length - displayedCount;
     const loadMoreBtn = document.createElement("button");
     loadMoreBtn.className = "load-more-btn";
@@ -466,6 +572,115 @@ function openPostDetail(post) {
   });
 
   modal.classList.remove("hidden");
+}
+
+// ============ REORDER SYSTEM ============
+function enterReorderMode() {
+  reorderMode = true;
+  reorderedPosts = [...cachedPosts];
+  draggedItem = null;
+
+  // Disable search and sort while reordering
+  const searchInput = document.getElementById("blog-search");
+  const sortBtns = document.querySelectorAll(".sort-btn");
+  if (searchInput) { searchInput.disabled = true; searchInput.value = ""; currentSearch = ""; }
+  sortBtns.forEach((b) => b.disabled = true);
+
+  renderReorderToolbar();
+  renderBlogPage();
+  showStatus("REORDER MODE — DRAG OR USE ARROWS", "saving");
+  log("Entered reorder mode");
+}
+
+function exitReorderMode() {
+  reorderMode = false;
+  reorderedPosts = null;
+  draggedItem = null;
+
+  const searchInput = document.getElementById("blog-search");
+  const sortBtns = document.querySelectorAll(".sort-btn");
+  if (searchInput) searchInput.disabled = false;
+  sortBtns.forEach((b) => b.disabled = false);
+
+  renderReorderToolbar();
+  resetAndRender();
+  log("Exited reorder mode");
+}
+
+async function saveReorder() {
+  if (!reorderedPosts) return;
+  if (!githubToken) { alert("Not authenticated!"); return; }
+
+  showStatus("SAVING NEW ORDER...", "saving");
+  await fetchPostsFromGitHub();
+
+  // Apply the new order: map reorderedPosts IDs to fresh data
+  const freshById = {};
+  cachedPosts.forEach((p) => { freshById[p.id] = p; });
+
+  const newOrder = reorderedPosts
+    .map((p) => freshById[p.id])
+    .filter((p) => p !== undefined);
+
+  // Add any posts from fresh that weren't in reorderedPosts (edge case)
+  cachedPosts.forEach((p) => {
+    if (!newOrder.some((np) => np.id === p.id)) {
+      newOrder.push(p);
+    }
+  });
+
+  const saved = await savePostsToGitHub(newOrder);
+
+  if (saved) {
+    exitReorderMode();
+    showStatus("ORDER SAVED!", "success");
+  } else {
+    showStatus("SAVE FAILED!", "error");
+  }
+}
+
+function renderReorderToolbar() {
+  const existing = document.getElementById("reorder-toolbar");
+  if (existing) existing.remove();
+
+  const isAdmin = sessionStorage.getItem("testpage_admin") === "true";
+  if (!isAdmin) return;
+
+  const reorderBtn = document.getElementById("reorder-btn");
+
+  if (reorderMode) {
+    if (reorderBtn) reorderBtn.classList.add("hidden");
+
+    const toolbar = document.createElement("div");
+    toolbar.id = "reorder-toolbar";
+    toolbar.className = "reorder-toolbar panel";
+    toolbar.innerHTML = `
+      <div class="reorder-toolbar-inner">
+        <span class="reorder-toolbar-label">&#9776; REORDER MODE</span>
+        <div class="reorder-toolbar-actions">
+          <button id="reorder-save-btn" class="admin-action-btn publish-all-btn">&#10003; SAVE ORDER</button>
+          <button id="reorder-cancel-btn" class="btn-secondary clear-queue-btn">CANCEL</button>
+        </div>
+      </div>
+    `;
+
+    // Insert after delete queue panel (or pending queue, or header)
+    const deletePanel = document.getElementById("delete-queue-panel");
+    const pendingPanel = document.getElementById("pending-queue-panel");
+    const header = document.querySelector(".blog-page-header");
+    const ref = deletePanel || pendingPanel || header;
+    if (ref && ref.parentNode) {
+      ref.parentNode.insertBefore(toolbar, ref.nextSibling);
+    }
+
+    document.getElementById("reorder-save-btn").addEventListener("click", saveReorder);
+    document.getElementById("reorder-cancel-btn").addEventListener("click", () => {
+      exitReorderMode();
+      showStatus("REORDER CANCELLED", "success");
+    });
+  } else {
+    if (reorderBtn) reorderBtn.classList.remove("hidden");
+  }
 }
 
 // ============ QUEUE SYSTEM (PUBLISH) ============
@@ -591,6 +806,9 @@ async function publishAll() {
     }
 
     showStatus(`SAVING ${pendingQueue.length} POSTS...`, "saving");
+
+    // FIXED: Reverse so first-added = earliest date = appears at top (newest)
+    // First-added = oldest (bottom), last-added = newest (top)
     const newPosts = pendingQueue.map((p) => ({
       id: p.id,
       date: p.date,
@@ -865,7 +1083,7 @@ function loadSettings() {
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);
     if (stored) return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
-  } catch {}
+  } catch { }
   return { ...DEFAULT_SETTINGS };
 }
 
@@ -970,6 +1188,7 @@ function setAdminMode(enabled) {
   const loginBtn = document.getElementById("admin-login-btn");
   const logoutBtn = document.getElementById("admin-logout-btn");
   const newPostBtn = document.getElementById("new-post-btn");
+  const reorderBtn = document.getElementById("reorder-btn");
 
   if (enabled) sessionStorage.setItem("testpage_admin", "true");
   else {
@@ -977,14 +1196,17 @@ function setAdminMode(enabled) {
     githubToken = null;
     pendingQueue = [];
     deleteQueue = [];
+    if (reorderMode) exitReorderMode();
   }
 
   if (loginBtn) loginBtn.classList.toggle("hidden", enabled);
   if (logoutBtn) logoutBtn.classList.toggle("hidden", !enabled);
   if (newPostBtn) newPostBtn.classList.toggle("hidden", !enabled);
+  if (reorderBtn) reorderBtn.classList.toggle("hidden", !enabled);
 
   renderQueue();
   renderDeleteQueue();
+  renderReorderToolbar();
   resetAndRender();
 }
 
@@ -1116,13 +1338,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () => {
       const totalPending = pendingQueue.length + deleteQueue.length;
-      if (totalPending > 0) {
-        if (!confirm(`You have ${pendingQueue.length} unpublished and ${deleteQueue.length} pending deletions. Logout anyway? They will be lost.`)) {
+      if (totalPending > 0 || reorderMode) {
+        if (!confirm(`You have unsaved changes. Logout anyway? They will be lost.`)) {
           return;
         }
       }
       setAdminMode(false);
       showStatus("LOGGED OUT", "success");
+    });
+  }
+
+  // Reorder button
+  const reorderBtn = document.getElementById("reorder-btn");
+  if (reorderBtn) {
+    reorderBtn.addEventListener("click", () => {
+      if (reorderMode) return;
+      enterReorderMode();
     });
   }
 
