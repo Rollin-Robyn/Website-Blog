@@ -1,5 +1,16 @@
 [
   {
+    "id": "post-1771247888099",
+    "date": "16/02/26",
+    "title": "La Llegada del Portatil. (12/2/2026)",
+    "titleColor": "#ffffff",
+    "content": "Llego el dia al fin, hoy llegó el portatil a una hora bastante temprana.\n\nLe pregunté a Klaus y salí a recogerlo para {color:#9c9c9c}configurarlo{/color} durante el trabajo mientras hacia otras cosas.\n\nEl portatil es bastante ligero y no suena mucho lo cual agradezco, me confundo un poco de vez en cuando ya que el teclado es finés pero nada que una redistribucion de teclado no arregle.\n\nTambien tuve que comprar la mochila para llevar el portatil y el raton pero bueno.\n\nDe momento ya lo tengo configurado y la verdad es que {color:#fffbd1}va de maravilla{/color}, juegos incluidos.",
+    "color": "#ffffff",
+    "images": [
+      "https://raw.githubusercontent.com/Rollin-Robyn/Website-Blog/main/blog-images/img-1771247912119-0-0.jpg"
+    ]
+  },
+  {
     "id": "post-1771240784224",
     "date": "16/02/26",
     "title": "Bueno, A seguir trabajando. (10/2/2026)",
