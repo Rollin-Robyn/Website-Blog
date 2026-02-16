@@ -781,9 +781,9 @@ async function publishAll() {
     const totalImages = pendingQueue.reduce((sum, p) => sum + (p.localImageFiles || []).length, 0);
     let uploadedCount = 0;
 
-    for (let i = 0; i < pendingQueue.length; i++) {
+        for (let i = 0; i < pendingQueue.length; i++) {
       const post = pendingQueue[i];
-      const imageUrls = [];
+      const imageUrls = new Array(post.localImageFiles ? post.localImageFiles.length : 0).fill(null);
 
       if (post.localImageFiles && post.localImageFiles.length > 0) {
         for (let j = 0; j < post.localImageFiles.length; j++) {
@@ -793,23 +793,24 @@ async function publishAll() {
           try {
             const compressed = await compressImage(post.localImageFiles[j]);
             const url = await uploadImageToGitHub(compressed, `img-${Date.now()}-${i}-${j}.jpg`);
-            if (url) imageUrls.push(url);
+            if (url) imageUrls[j] = url;
           } catch (e) {
             console.error("Image upload failed:", e);
           }
         }
       }
 
-      post.images = imageUrls;
+      // Filter nulls (failed uploads) but keep original order
+      post.images = imageUrls.filter((url) => url !== null);
       delete post.localImages;
       delete post.localImageFiles;
     }
 
     showStatus(`SAVING ${pendingQueue.length} POSTS...`, "saving");
 
-    // FIXED: Reverse so first-added = earliest date = appears at top (newest)
-    // First-added = oldest (bottom), last-added = newest (top)
-    const newPosts = pendingQueue.map((p) => ({
+    // Last-added = newest (top of page), first-added = oldest (bottom)
+    // Reverse because we prepend: last item in queue should be index 0 in cachedPosts
+    const newPosts = [...pendingQueue].reverse().map((p) => ({
       id: p.id,
       date: p.date,
       title: p.title,
