@@ -1,0 +1,12 @@
+{
+  "name": "website-blog-tools",
+  "version": "1.0.0",
+  "description": "Local tools for managing blog posts",
+  "type": "module",
+  "scripts": {
+    "new-post": "node new-post.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0"
+  }
+}

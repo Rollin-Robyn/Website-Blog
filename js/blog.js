@@ -12,9 +12,9 @@ const SETTINGS_KEY = "testpage_settings";
 const DEBUG = true;
 
 const ADMIN_USERNAME_HASH =
-  "575aad173fe88daee328513f7863c40938ac02bfda2c3e384d3c5c5a83d0e3cf";
+  "4ebf5e3905f5234d061b134a5f392edb997e9bb2b53788ab819d9cdd53f752ea";
 const ADMIN_PASSWORD_HASH =
-  "db7009bbc0ea420246146b8336df6f33f7e67d7f1389c1f58496d012a2f29e39";
+  "ed1c42a1b5fb4859ff6e4724af71f01b97a3d4975527dd35808152805ddebc75";
 
 let cachedPosts = [];
 let fileSha = null;
